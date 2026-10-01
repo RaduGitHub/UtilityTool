@@ -1,0 +1,24 @@
+{
+  "dotnet.preferCSharpExtension": true,
+  "dotnet.server.useOmnisharp": false,
+  "dotnet.defaultSolution": "UtilityTool.sln",
+  "dotnetAcquisitionExtension.existingDotnetPath": [
+    {
+      "path": "D:\\Codes\\UtilityTool\\.tools\\dotnet\\dotnet.exe",
+      "extensionId": "ms-dotnettools.csharp"
+    }
+  ],
+  "dotnet.server.environmentVariables": {
+    "DOTNET_CLI_HOME": "D:\\Codes\\UtilityTool\\.tools\\cli-home",
+    "NUGET_PACKAGES": "D:\\Codes\\UtilityTool\\.tools\\nuget",
+    "DOTNET_ROOT": "D:\\Codes\\UtilityTool\\.tools\\dotnet",
+    "PATH": "D:\\Codes\\UtilityTool\\.tools\\dotnet;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\Git\\cmd;C:\\Users\\radum\\AppData\\Local\\Microsoft\\WindowsApps;",
+    "DOTNET_GENERATE_ASPNET_CERTIFICATE": "false",
+    "DOTNET_ADD_GLOBAL_TOOLS_TO_PATH": "false"
+  },
+  "csharp.suppressDotnetInstallWarning": true,
+  "terminal.integrated.env.windows": {
+    "PATH": "${workspaceFolder}\\.tools\\dotnet;${env:PATH}",
+    "DOTNET_ROOT": "${workspaceFolder}\\.tools\\dotnet"
+  }
+}

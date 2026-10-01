@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build UtilityTool",
+      "type": "process",
+      "command": "${env:WINDIR}\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+      "args": [
+        "/nologo",
+        "/target:winexe",
+        "/optimize+",
+        "/reference:System.Drawing.dll",
+        "/reference:System.Windows.Forms.dll",
+        "/out:${workspaceFolder}\\UtilityTool.exe",
+        "${workspaceFolder}\\Program.cs",
+        "/recurse:${workspaceFolder}\\Frontend\\*.cs",
+        "/recurse:${workspaceFolder}\\Backend\\*.cs",
+        "/reference:System.Security.dll"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run UtilityTool",
+      "type": "process",
+      "command": "${workspaceFolder}\\UtilityTool.exe",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Build UtilityTool",
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}
