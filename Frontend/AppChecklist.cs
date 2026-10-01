@@ -37,6 +37,9 @@ namespace UtilityTool.Frontend
 
         protected override void WndProc(ref Message message)
         {
+            // The second press arrives as WM_LBUTTONDBLCLK, not WM_LBUTTONDOWN.
+            // Treat it as another click so rapid checkbox clicks are never skipped.
+            if (message.Msg == 0x0203) message.Msg = 0x0201;
             int kind = message.Msg;
             if (kind == 0x000F || kind == 0x0085) FitColumn(); // Before client/non-client paint.
             base.WndProc(ref message);

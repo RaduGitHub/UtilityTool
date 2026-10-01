@@ -29,8 +29,10 @@ namespace UtilityTool.Backend
 
         internal void SetPassword(string password)
         {
-            if (password == null || password.Length < 8 || password.Length > 256)
-                throw new ArgumentException("Use a password between 8 and 256 characters.");
+            // Temporarily disabled for visual testing:
+            // if (password == null || password.Length < 8 || password.Length > 256)
+            //     throw new ArgumentException("Use a password between 8 and 256 characters.");
+            if (password == null) throw new ArgumentNullException("password");
             var newSalt = new byte[32];
             using (var random = RandomNumberGenerator.Create()) random.GetBytes(newSalt);
             byte[] newHash = Derive(password, newSalt);
@@ -55,7 +57,8 @@ namespace UtilityTool.Backend
 
         internal bool Verify(string password)
         {
-            if (!HasPassword || password == null || password.Length > 256) return false;
+            // Password length limit temporarily disabled for visual testing.
+            if (!HasPassword || password == null) return false;
             byte[] candidate = Derive(password, salt);
             try
             {

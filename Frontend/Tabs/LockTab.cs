@@ -25,6 +25,13 @@ namespace UtilityTool.Frontend.Tabs
         private readonly Button unlock = new ModernButton();
         private readonly Button setPassword = new ModernButton();
         private readonly Label guardStatus = new Label();
+        private readonly LockStateStore stateStore = new LockStateStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UtilityTool", "locks.xml"));
+        private readonly Dictionary<string, InstalledApp> savedApps = new Dictionary<string, InstalledApp>(StringComparer.OrdinalIgnoreCase);
+        private readonly System.Windows.Forms.Timer saveTimer = new System.Windows.Forms.Timer { Interval = 250 };
+        private bool savedLocked;
+        private bool stateInitialized;
+        private bool selectionDirty;
+        private readonly HashSet<AppLockOverlay> activeOverlays = new HashSet<AppLockOverlay>();
 
         internal LockTab() : base("Lock")
         {
@@ -84,6 +91,9 @@ namespace UtilityTool.Frontend.Tabs
                 }
                 if (e.NewValue == CheckState.Checked) selectedApps.Add(app.Id);
                 else selectedApps.Remove(app.Id);
+                savedApps[app.Id] = app;
+                selectionDirty = true;
+                saveTimer.Stop(); saveTimer.Start();
                 UpdateAppStatus();
             };
             content.Controls.Add(installedApps, 0, 3);
@@ -113,25 +123,77 @@ namespace UtilityTool.Frontend.Tabs
                 try { BeginInvoke((Action)delegate { if (!IsDisposed && guard.IsArmed) guardStatus.Text = status; }); }
                 catch (InvalidOperationException) { }
             };
-            guard.RequestAccess = delegate(GuardProcess process)
+            guard.RequestAccessAsync = delegate(GuardProcess process)
             {
-                if (IsDisposed || !IsHandleCreated) return false;
+                if (IsDisposed || !IsHandleCreated) return Task.FromResult(false);
+                int version = guard.SessionVersion;
                 try
                 {
-                    return (bool)Invoke((Func<bool>)delegate
+                    var pending = (Task<bool>)Invoke((Func<Task<bool>>)(async delegate
                     {
                         if (IsDisposed || !guard.IsArmed) return false;
                         using (var overlay = new AppLockOverlay(process))
                         {
-                            return overlay.Prompt(passwords, FindForm());
+                            activeOverlays.Add(overlay);
+                            try { return await overlay.PromptAsync(passwords, delegate { return guard.IsArmed && guard.SessionVersion == version; }); }
+                            finally { activeOverlays.Remove(overlay); }
                         }
-                    });
+                    }));
+                    return pending;
                 }
-                catch (InvalidOperationException) { return false; }
+                catch (InvalidOperationException) { return Task.FromResult(false); }
             };
             Controls.Add(content);
             AppTheme.Apply(this);
+            saveTimer.Tick += delegate { saveTimer.Stop(); if (SaveState(savedLocked)) selectionDirty = false; };
             UpdateGuardControls();
+        }
+
+        internal void InitializeSavedLocks(bool startTimer = true)
+        {
+            if (stateInitialized) return;
+            stateInitialized = true;
+            try
+            {
+                var state = stateStore.Load();
+                savedLocked = state.Locked;
+                foreach (var app in state.Apps)
+                {
+                    if (!InstalledAppCatalog.IsSelectable(app)) continue;
+                    selectedApps.Add(app.Id); savedApps[app.Id] = app;
+                }
+                FilterApps();
+                if (!savedLocked) return;
+                if (passwords == null || !passwords.HasPassword)
+                {
+                    guardStatus.Text = "Saved locks could not start: password settings are unavailable.";
+                    return;
+                }
+                var chosen = new List<InstalledApp>(savedApps.Values);
+                if (chosen.Count == 0) { guardStatus.Text = "Saved locks contain no supported apps."; return; }
+                // Create the hidden tab handle before the guard can request a password.
+                var handle = Handle;
+                guard.Arm(chosen, startTimer);
+                guardStatus.Text = "Saved locks restored. Guard is active.";
+            }
+            catch (Exception error) { guardStatus.Text = "Could not restore lock settings: " + error.Message; }
+            finally { UpdateGuardControls(); }
+        }
+
+        private bool SaveState(bool locked)
+        {
+            try
+            {
+                var state = new LockState { Locked = locked };
+                foreach (string id in selectedApps)
+                {
+                    InstalledApp app;
+                    if (savedApps.TryGetValue(id, out app)) state.Apps.Add(app);
+                }
+                stateStore.Save(state);
+                return true;
+            }
+            catch (Exception error) { guardStatus.Text = "Could not save lock settings: " + error.Message; return false; }
         }
 
         internal async Task LoadInstalledApps()
@@ -146,7 +208,7 @@ namespace UtilityTool.Frontend.Tabs
                 if (IsDisposed) return;
                 appCatalog.Clear();
                 appCatalog.AddRange(apps);
-                selectedApps.RemoveWhere(delegate(string id) { return !apps.Exists(delegate(InstalledApp app) { return string.Equals(app.Id, id, StringComparison.OrdinalIgnoreCase); }); });
+                foreach (var app in apps) if (selectedApps.Contains(app.Id)) savedApps[app.Id] = app;
                 appsLoaded = true;
                 FilterApps();
             }
@@ -180,7 +242,7 @@ namespace UtilityTool.Frontend.Tabs
         private void UpdateAppStatus()
         {
             appStatus.Text = installedApps.Items.Count + " of " + appCatalog.Count + " apps shown; " + selectedApps.Count
-                + " selected.\nWindows-registered apps for your account. Portable apps may not appear. Selections apply to this session.";
+                + " selected.\nSystem tools and unsupported apps are hidden. Selections and lock status are saved automatically.";
         }
 
         private bool CheckPassword(string title)
@@ -213,6 +275,8 @@ namespace UtilityTool.Frontend.Tabs
                 "Apply app locks", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             try
             {
+                if (!SaveState(true)) return;
+                savedLocked = true; selectionDirty = false; saveTimer.Stop();
                 guard.Arm(chosen, true);
                 guardStatus.Text = "Guard is active. Unlock apps or close UtilityTool using your custom password.";
                 UpdateGuardControls();
@@ -223,14 +287,20 @@ namespace UtilityTool.Frontend.Tabs
         private void UnlockApps()
         {
             if (!guard.IsArmed || !CheckPassword("Unlock selected apps")) return;
+            if (!SaveState(false)) return;
+            savedLocked = false; selectionDirty = false; saveTimer.Stop();
             guard.Disarm();
+            ClearOverlays();
             guardStatus.Text = "Apps unlocked. Reopen any app that was closed.";
             UpdateGuardControls();
         }
 
         private void UpdateGuardControls()
         {
-            installedApps.Enabled = !guard.IsArmed;
+            // Native disabled list views use a system background instead of our dark theme.
+            // Keep scrolling/search available; ItemCheck already rejects changes while armed.
+            installedApps.Enabled = true;
+            installedApps.CheckOnClick = !guard.IsArmed;
             refreshApps.Enabled = !guard.IsArmed && !loadingApps;
             applyLocks.Enabled = passwords != null && !guard.IsArmed;
             setPassword.Enabled = passwords != null && !guard.IsArmed;
@@ -242,12 +312,26 @@ namespace UtilityTool.Frontend.Tabs
             if (!guard.IsArmed) return true;
             if (!CheckPassword("Enter password to close UtilityTool")) return false;
             guard.Disarm();
+            ClearOverlays();
             return true;
+        }
+
+        private void ClearOverlays()
+        {
+            foreach (var overlay in new List<AppLockOverlay>(activeOverlays)) overlay.Cancel();
+            activeOverlays.Clear();
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) guard.Dispose();
+            if (disposing)
+            {
+                saveTimer.Stop();
+                if (selectionDirty) SaveState(savedLocked);
+                saveTimer.Dispose();
+                guard.Dispose();
+                ClearOverlays();
+            }
             base.Dispose(disposing);
         }
 

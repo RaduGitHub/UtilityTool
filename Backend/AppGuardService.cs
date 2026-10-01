@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace UtilityTool.Backend
 {
@@ -22,7 +23,10 @@ namespace UtilityTool.Backend
         private int generation;
         private readonly HashSet<string> approved = new HashSet<string>();
         private readonly HashSet<string> rejected = new HashSet<string>();
-        internal Func<GuardProcess, bool> RequestAccess;
+        private readonly HashSet<string> pending = new HashSet<string>();
+        internal Func<GuardProcess, bool> RequestAccess { get; set; }
+        internal Func<GuardProcess, Task<bool>> RequestAccessAsync;
+        internal int SessionVersion { get { lock (sync) return generation; } }
         internal event Action<string> StatusChanged;
         internal bool IsArmed { get { lock (sync) return armed; } }
 
@@ -34,7 +38,7 @@ namespace UtilityTool.Backend
         {
             lock (sync)
             {
-                paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear();
+                paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear(); pending.Clear();
                 foreach (var app in apps)
                 {
                     if (!app.CanGuard) throw new InvalidOperationException("Cannot guard " + app.Name + ".");
@@ -55,7 +59,7 @@ namespace UtilityTool.Backend
             {
                 armed = false; generation++;
                 if (timer != null) { timer.Dispose(); timer = null; }
-                paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear();
+                paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear(); pending.Clear();
             }
         }
 
@@ -77,13 +81,19 @@ namespace UtilityTool.Backend
                     {
                         if (!armed || generation != version) return;
                         if (!paths.Contains(process.Path ?? "") && !appIds.Contains(process.AppId ?? "")) continue;
-                        if (approved.Contains(identity)) continue;
+                        if (approved.Contains(identity) || pending.Contains(identity)) continue;
                         if (rejected.Contains(identity))
                         {
                             try { stop(process); }
                             catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
                             continue;
                         }
+                    }
+                    if (RequestAccessAsync != null)
+                    {
+                        lock (sync) pending.Add(identity);
+                        ObserveAccess(process, identity, version);
+                        continue;
                     }
                     bool allowed = RequestAccess != null && RequestAccess(process);
                     lock (sync)
@@ -101,6 +111,27 @@ namespace UtilityTool.Backend
             }
             catch (Exception error) { Publish("Guard scan failed: " + error.Message); }
             finally { Interlocked.Exchange(ref scanning, 0); }
+        }
+
+        private async void ObserveAccess(GuardProcess process, string identity, int version)
+        {
+            try
+            {
+                bool allowed = await RequestAccessAsync(process).ConfigureAwait(false);
+                lock (sync)
+                {
+                    if (!armed || generation != version) return;
+                    if (allowed) { approved.Add(identity); Publish("Access allowed: " + process.Name); }
+                    else
+                    {
+                        rejected.Add(identity);
+                        try { stop(process); Publish("Closed: " + process.Name); }
+                        catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
+                    }
+                }
+            }
+            catch (Exception error) { Publish("Could not show app lock: " + error.Message); }
+            finally { lock (sync) { if (generation == version) pending.Remove(identity); } }
         }
 
         private void Publish(string message)

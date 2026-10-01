@@ -4,28 +4,56 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.ComponentModel;
+using System.Threading.Tasks;
 
 namespace UtilityTool.Backend
 {
     internal static class WindowBlur
     {
-        // Capture once before the cover is shown. Raw and blurred images stay in memory.
-        internal static Bitmap Capture(Rectangle bounds, Rectangle desktop)
+        [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr window, IntPtr destination, uint flags);
+
+        internal static async Task<Bitmap> CaptureAsync(IntPtr window, Size size)
         {
-            Rectangle visible = Rectangle.Intersect(bounds, desktop);
-            if (visible.Width < 1 || visible.Height < 1 || (long)bounds.Width * bounds.Height > 16000000)
+            // PrintWindow can block in another app. Never block the UtilityTool UI.
+            var capture = Task.Run(delegate { return Capture(window, size); });
+            if (await Task.WhenAny(capture, Task.Delay(1200)) == capture) return await capture;
+            var cleanup = capture.ContinueWith(delegate(Task<Bitmap> finished)
+            {
+                if (finished.Status == TaskStatus.RanToCompletion && finished.Result != null) finished.Result.Dispose();
+                else if (finished.IsFaulted) { var ignored = finished.Exception; }
+            }, TaskScheduler.Default);
+            return null;
+        }
+
+        // Ask the target HWND to render its client area, even when another app covers it.
+        // Raw and blurred images stay in memory; never fall back to desktop pixels.
+        internal static Bitmap Capture(IntPtr window, Size size)
+        {
+            if (window == IntPtr.Zero || size.Width < 1 || size.Height < 1 || (long)size.Width * size.Height > 16000000)
                 return null;
             try
             {
-                using (var source = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb))
+                using (var source = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb))
                 {
                     using (var graphics = Graphics.FromImage(source))
                     {
-                        graphics.Clear(Color.FromArgb(224, 230, 238));
-                        graphics.CopyFromScreen(visible.Location,
-                            new Point(visible.Left - bounds.Left, visible.Top - bounds.Top),
-                            visible.Size, CopyPixelOperation.SourceCopy);
+                        graphics.Clear(Color.Magenta);
+                        IntPtr dc = graphics.GetHdc();
+                        try
+                        {
+                            // PW_CLIENTONLY | PW_RENDERFULLCONTENT supports accelerated windows.
+                            if (!PrintWindow(window, dc, 3) && !PrintWindow(window, dc, 1)) return null;
+                        }
+                        finally { graphics.ReleaseHdc(dc); }
                     }
+                    bool painted = false;
+                    for (int y = 0; y < source.Height; y += Math.Max(1, source.Height / 8))
+                        for (int x = 0; x < source.Width; x += Math.Max(1, source.Width / 8))
+                        {
+                            Color pixel = source.GetPixel(x, y);
+                            if ((pixel.R != 255 || pixel.G != 0 || pixel.B != 255) && (pixel.R != 0 || pixel.G != 0 || pixel.B != 0)) painted = true;
+                        }
+                    if (!painted) return null;
                     return Create(source);
                 }
             }

@@ -16,31 +16,15 @@ namespace UtilityTool.Frontend
         private bool busy;
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
-        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
-        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint source, uint target, bool attach);
 
         internal void FocusPassword()
         {
-            if (IsDisposed || !Visible || busy) return;
-            uint unused;
-            uint foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), out unused);
-            uint ownThread = GetCurrentThreadId();
-            bool attached = false;
-            try
-            {
-                // Link input only during activation; never leave the app input queues joined.
-                if (foregroundThread != 0 && foregroundThread != ownThread)
-                    attached = AttachThreadInput(ownThread, foregroundThread, true);
-                BringToFront();
-                SetForegroundWindow(Handle);
-                Activate();
-                SelectPasswordField();
-            }
-            finally
-            {
-                if (attached) AttachThreadInput(ownThread, foregroundThread, false);
-            }
+            if (IsDisposed || !Visible || busy || ContainsFocus) return;
+            // Joining input queues resets keyboard state and can lose fast keystrokes.
+            // Never refocus a dialog the user is already typing or clicking in.
+            if (GetForegroundWindow() != Handle) SetForegroundWindow(Handle);
+            Activate();
+            SelectPasswordField();
         }
         private void SelectPasswordField()
         {
@@ -51,7 +35,7 @@ namespace UtilityTool.Frontend
         }
         internal void CancelForExitedApp() { busy = false; DialogResult = DialogResult.Cancel; Close(); }
 
-        internal PasswordDialog(PasswordStore store, bool create, string title, bool closeOnIncorrect = false)
+        internal PasswordDialog(PasswordStore store, bool create, string title, bool closeOnIncorrect = false, bool focusOnShow = true)
         {
             Text = title; ClientSize = new Size(420, create ? 300 : 245);
             StartPosition = FormStartPosition.CenterParent; FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -59,38 +43,49 @@ namespace UtilityTool.Frontend
             Font = new Font("Segoe UI", 10);
             HandleCreated += delegate { AppTheme.ApplyWindowFrame(this); };
             BackColor = AppTheme.Surface;
-            var layout = new FrostedLayout { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1 };
-            layout.Controls.Add(new Label { Text = create ? "Create a custom password (8–256 characters)" : "Enter your UtilityTool password", AutoSize = true });
-            password.UseSystemPasswordChar = true; password.MaxLength = 256; password.Dock = DockStyle.Top;
+            var layout = new FrostedLayout { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = create ? 7 : 5 };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            if (create)
+            {
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            }
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.Controls.Add(new Label { Text = create ? "Create a custom password (any length for testing)" : "Enter your UtilityTool password", AutoSize = true, MaximumSize = new Size(380, 0) });
+            password.UseSystemPasswordChar = true; password.MaxLength = 0; password.Dock = DockStyle.Top;
             password.AccessibleName = "UtilityTool password"; password.TabIndex = 0;
             layout.Controls.Add(password);
             if (create)
             {
                 layout.Controls.Add(new Label { Text = "Confirm password", AutoSize = true });
-                confirmation.UseSystemPasswordChar = true; confirmation.MaxLength = 256; confirmation.Dock = DockStyle.Top;
+                confirmation.UseSystemPasswordChar = true; confirmation.MaxLength = 0; confirmation.Dock = DockStyle.Top;
                 confirmation.AccessibleName = "Confirm UtilityTool password"; layout.Controls.Add(confirmation);
             }
-            message.AutoSize = true; message.ForeColor = AppTheme.Error; layout.Controls.Add(message);
+            // Reserve status space so "Checking..." never moves the button under the cursor.
+            message.Dock = DockStyle.Fill; message.ForeColor = AppTheme.Error; layout.Controls.Add(message);
             var buttons = new FlowLayoutPanel { AutoSize = true };
             submit.Text = create ? "Save password" : "Unlock"; submit.AutoSize = true;
             var cancel = new ModernButton { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
             buttons.Controls.Add(submit); buttons.Controls.Add(cancel); layout.Controls.Add(buttons);
             Controls.Add(layout); AppTheme.Apply(this); AcceptButton = submit; CancelButton = cancel;
             ActiveControl = password;
-            Shown += delegate { FocusPassword(); BeginInvoke((Action)SelectPasswordField); };
-            Activated += delegate
-            {
-                if (!IsDisposed && IsHandleCreated)
-                    BeginInvoke((Action)SelectPasswordField);
-            };
+            // Focus once when opening. Deferred activation callbacks can steal focus
+            // between a button's mouse-down and mouse-up, cancelling the first click.
+            Shown += delegate { if (focusOnShow) FocusPassword(); };
             FormClosing += delegate(object sender, FormClosingEventArgs e) { if (busy) e.Cancel = true; };
             submit.Click += async delegate
             {
-                if (create && (password.Text.Length < 8 || password.Text != confirmation.Text))
-                { message.Text = "Use at least 8 characters and matching passwords."; return; }
+                if (busy) return;
+                // Minimum length temporarily disabled; confirmation must still match.
+                if (create && password.Text != confirmation.Text)
+                { message.Text = "Passwords must match."; return; }
                 string entered = password.Text;
-                password.Clear(); confirmation.Clear();
-                busy = true; submit.Enabled = false; password.Enabled = false; confirmation.Enabled = false;
+                busy = true; submit.Enabled = false;
+                password.ReadOnly = true; confirmation.ReadOnly = true;
+                UseWaitCursor = true;
                 message.Text = "Checking...";
                 try
                 {
@@ -115,7 +110,12 @@ namespace UtilityTool.Frontend
                 finally
                 {
                     entered = null; busy = false;
-                    if (!IsDisposed) { submit.Enabled = true; password.Enabled = true; confirmation.Enabled = true; password.Focus(); }
+                    if (!IsDisposed)
+                    {
+                        UseWaitCursor = false;
+                        submit.Enabled = true; password.ReadOnly = false; confirmation.ReadOnly = false;
+                        if (Visible && ContainsFocus) { password.Focus(); password.SelectAll(); }
+                    }
                 }
             };
         }

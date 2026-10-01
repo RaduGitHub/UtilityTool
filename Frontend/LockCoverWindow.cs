@@ -1,21 +1,84 @@
 ﻿using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
+using System;
+using UtilityTool.Backend;
+using System.Runtime.InteropServices;
 
 namespace UtilityTool.Frontend
 {
     internal sealed class LockCoverWindow : Form
     {
-        private readonly Bitmap blurred;
-        internal LockCoverWindow(Bitmap background)
+        private Bitmap blurred;
+        private readonly IntPtr targetWindow;
+        private DateTime controlsUsedUntil;
+        internal bool IsDragging { get; private set; }
+        internal event Action<Rectangle> DragPositionChanged;
+        [StructLayout(LayoutKind.Sequential)] private struct DragRect { internal int Left, Top, Right, Bottom; }
+        internal bool UsingWindowControls { get { return IsDragging || DateTime.UtcNow < controlsUsedUntil; } }
+        internal void SetBackground(Bitmap background)
         {
+            if (IsDisposed) { if (background != null) background.Dispose(); return; }
+            if (blurred != null) blurred.Dispose();
+            blurred = background;
+            Invalidate();
+        }
+        internal LockCoverWindow(Bitmap background, IntPtr target = default(IntPtr), string name = "Locked app")
+        {
+            targetWindow = target;
             blurred = background;
             DoubleBuffered = true;
-            FormBorderStyle = FormBorderStyle.None;
+            FormBorderStyle = target == IntPtr.Zero ? FormBorderStyle.None : FormBorderStyle.FixedSingle;
+            Text = name + " — Locked";
+            ControlBox = true; MinimizeBox = true; MaximizeBox = true;
             ShowInTaskbar = false;
-            TopMost = true;
+            TopMost = false;
             StartPosition = FormStartPosition.Manual;
             BackColor = AppTheme.Surface;
+            HandleCreated += delegate { AppTheme.ApplyWindowFrame(this); };
+        }
+        protected override bool ShowWithoutActivation { get { return true; } }
+        protected override void WndProc(ref Message message)
+        {
+            if (targetWindow != IntPtr.Zero)
+            {
+                if (message.Msg == 0x0231) IsDragging = true; // WM_ENTERSIZEMOVE
+                if (message.Msg == 0x0216) // WM_MOVING provides the next native drag position.
+                {
+                    var rect = (DragRect)Marshal.PtrToStructure(message.LParam, typeof(DragRect));
+                    var bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                    AppWindows.MoveWindow(targetWindow, bounds.Location);
+                    var changed = DragPositionChanged;
+                    if (changed != null) changed(bounds);
+                }
+                if (message.Msg == 0x0232) // WM_EXITSIZEMOVE
+                {
+                    AppWindows.MoveWindow(targetWindow, Location);
+                    IsDragging = false;
+                    controlsUsedUntil = DateTime.UtcNow.AddMilliseconds(250);
+                }
+            }
+            if (targetWindow != IntPtr.Zero && message.Msg == 0x0112)
+            {
+                int command = message.WParam.ToInt32();
+                int kind = command & 0xFFF0;
+                if (kind == 0xF010)
+                {
+                    // Drag the cover natively and move its target on each WM_MOVING,
+                    // instead of dragging the target and polling it every 100 ms.
+                    controlsUsedUntil = DateTime.UtcNow.AddMilliseconds(500);
+                    base.WndProc(ref message);
+                    return;
+                }
+                if (kind == 0xF020 || kind == 0xF030 || kind == 0xF060 || kind == 0xF120)
+                {
+                    controlsUsedUntil = DateTime.UtcNow.AddMilliseconds(500);
+                    AppWindows.WindowCommand(targetWindow, command, message.LParam);
+                    message.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+            base.WndProc(ref message);
         }
 
         protected override void OnPaint(PaintEventArgs e)

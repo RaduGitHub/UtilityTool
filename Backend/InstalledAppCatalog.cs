@@ -61,8 +61,11 @@ namespace UtilityTool.Backend
                         catch (TargetInvocationException) { }
                         if (!IsExecutable(target) && IsExecutable(id)) target = id;
                         if (!IsExecutable(target)) target = "";
-                        if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id) && ids.Add(id))
-                            apps.Add(new InstalledApp(id, name, target));
+                        if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id))
+                        {
+                            var app = new InstalledApp(id, name, target);
+                            if (IsSelectable(app) && ids.Add(id)) apps.Add(app);
+                        }
                     }
                     finally { Release(item); }
                 }
@@ -79,6 +82,38 @@ namespace UtilityTool.Backend
         {
             return !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path)
                 && string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+        }
+
+        internal static bool IsSelectable(InstalledApp app)
+        {
+            if (!app.CanGuard) return false;
+            if (!string.IsNullOrEmpty(app.ExecutablePath))
+            {
+                string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+                if (!string.IsNullOrEmpty(windows) && IsWithin(app.ExecutablePath, windows)) return false;
+                // Guarding UtilityTool itself would prevent opening the guard controls.
+                if (string.Equals(Path.GetFullPath(app.ExecutablePath),
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "UtilityTool.exe"),
+                    StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            // Windows shell, sign-in, security and servicing packages, not Store apps generally.
+            string[] systemPackages = {
+                "Microsoft.Windows.", "Microsoft.WindowsShell", "MicrosoftWindows.Client.",
+                "Microsoft.AAD.BrokerPlugin_", "Microsoft.AccountsControl_",
+                "Microsoft.LockApp_", "Microsoft.SecHealthUI_", "Microsoft.Windows.SecHealthUI_",
+                "Microsoft.CredDialogHost_", "Microsoft.AsyncTextService_",
+                "Microsoft.Win32WebViewHost_", "Windows."
+            };
+            foreach (string prefix in systemPackages)
+                if (app.Id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+
+        private static bool IsWithin(string path, string directory)
+        {
+            return Path.GetFullPath(path).StartsWith(
+                Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

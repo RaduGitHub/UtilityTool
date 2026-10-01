@@ -154,6 +154,14 @@ namespace UtilityTool.Frontend
         protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); pressed = false; Invalidate(); }
         protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); pressed = true; Invalidate(); }
         protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); pressed = false; Invalidate(); }
+        protected override void OnKeyUp(KeyEventArgs e)
+        {
+            // The last password key can be released after mouse-down focuses this
+            // button. ButtonBase clears its mouse-pressed state on any key-up,
+            // causing mouse-up to lose the click. Let the mouse finish its click.
+            if (pressed) { e.Handled = true; return; }
+            base.OnKeyUp(e);
+        }
         protected override void OnPaint(PaintEventArgs e)
         {
             // Paint the full parent background, including every rounded corner and outside edge.
@@ -193,6 +201,47 @@ namespace UtilityTool.Frontend
             base.OnSelectedIndexChanged(e);
             Invalidate();
         }
+        internal Rectangle NavigationBounds(int index)
+        {
+            Rectangle bounds = GetTabRect(index);
+            if (TabPages[index] is UtilityTool.Frontend.Tabs.SettingsTab)
+                bounds.X = Math.Max(bounds.X, ClientSize.Width - bounds.Width - 4);
+            return bounds;
+        }
+        protected override void WndProc(ref Message message)
+        {
+            if (message.Msg == 0x0084 && TabCount > 0) // WM_NCHITTEST uses screen coordinates.
+            {
+                long position = message.LParam.ToInt64();
+                var point = PointToClient(new Point((short)(position & 0xffff), (short)((position >> 16) & 0xffff)));
+                if (point.X >= 0 && point.X < ClientSize.Width && point.Y >= 0 && point.Y < GetTabRect(0).Bottom)
+                {
+                    // The native tab strip only knows the original left-side rectangles.
+                    // Keep the entire painted header interactive, including Settings on the right.
+                    message.Result = new IntPtr(1); // HTCLIENT
+                    return;
+                }
+            }
+            if ((message.Msg == 0x0201 || message.Msg == 0x0202 || message.Msg == 0x0203) && TabCount > 0)
+            {
+                long position = message.LParam.ToInt64();
+                var point = new Point((short)(position & 0xffff), (short)((position >> 16) & 0xffff));
+                if (point.Y >= 0 && point.Y < GetTabRect(0).Bottom)
+                {
+                    // Use the painted header positions, including the right-aligned Settings tab.
+                    for (int index = 0; message.Msg != 0x0202 && index < TabCount; index++)
+                        if (NavigationBounds(index).Contains(point))
+                        {
+                            Focus();
+                            SelectedIndex = index;
+                            break;
+                        }
+                    message.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+            base.WndProc(ref message);
+        }
         protected override void OnPaintBackground(PaintEventArgs e)
         {
             e.Graphics.Clear(AppTheme.Surface);
@@ -200,7 +249,7 @@ namespace UtilityTool.Frontend
         protected override void OnPaint(PaintEventArgs e)
         {
             for (int index = 0; index < TabCount; index++)
-                OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, GetTabRect(index), index,
+                OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, NavigationBounds(index), index,
                     index == SelectedIndex ? DrawItemState.Selected : DrawItemState.None));
         }
         protected override void OnDrawItem(DrawItemEventArgs e)
@@ -208,7 +257,7 @@ namespace UtilityTool.Frontend
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using (var background = new SolidBrush(AppTheme.Surface))
                 e.Graphics.FillRectangle(background, e.Bounds);
-            Rectangle bounds = GetTabRect(e.Index);
+            Rectangle bounds = NavigationBounds(e.Index);
             bool selected = e.Index == SelectedIndex;
             bounds.Inflate(-5, -5);
             using (var shape = AppTheme.Rounded(bounds, 9))

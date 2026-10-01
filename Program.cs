@@ -6,11 +6,12 @@ namespace UtilityTool
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainWindow());
+            bool background = Array.Exists(args, delegate(string arg) { return string.Equals(arg, "--background", StringComparison.OrdinalIgnoreCase); });
+            Application.Run(new MainWindow(background));
         }
     }
 }
