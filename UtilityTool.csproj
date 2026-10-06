@@ -14,7 +14,9 @@
   <ItemGroup>
     <Reference Include="System.Security" />
     <Compile Include="Program.cs" />
-    <Compile Include="Frontend\**\*.cs" />
+    <Compile Include="Frontend\**\*.cs" Exclude="Frontend\TileIconCache.cs;Frontend\DrawingBitmapCache.cs" />
+    <Compile Include="Frontend\TileIconCache.cs" />
+    <Compile Include="Frontend\DrawingBitmapCache.cs" />
     <Compile Include="Backend\**\*.cs" />
   </ItemGroup>
 </Project>

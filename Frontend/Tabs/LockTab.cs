@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Globalization;
 using System.Collections.Generic;
@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using UtilityTool.Backend;
 using System.IO;
+using System.Threading;
 namespace UtilityTool.Frontend.Tabs
 {
     internal sealed class LockTab : BufferedTabPage
@@ -19,6 +20,7 @@ namespace UtilityTool.Frontend.Tabs
         private bool filteringApps;
         private bool loadingApps;
         private bool appsLoaded;
+        private readonly CancellationTokenSource iconCancellation = new CancellationTokenSource();
         private readonly AppGuardService guard = new AppGuardService();
         private PasswordStore passwords;
         private readonly Button applyLocks = new ModernButton();
@@ -30,6 +32,7 @@ namespace UtilityTool.Frontend.Tabs
         private readonly System.Windows.Forms.Timer saveTimer = new System.Windows.Forms.Timer { Interval = 250 };
         private bool savedLocked;
         private bool stateInitialized;
+        private bool resourcesReleased;
         private bool selectionDirty;
         private readonly HashSet<AppLockOverlay> activeOverlays = new HashSet<AppLockOverlay>();
 
@@ -145,6 +148,7 @@ namespace UtilityTool.Frontend.Tabs
             };
             Controls.Add(content);
             AppTheme.Apply(this);
+            AppTheme.UseOpaqueSurfaces(content);
             saveTimer.Tick += delegate { saveTimer.Stop(); if (SaveState(savedLocked)) selectionDirty = false; };
             UpdateGuardControls();
         }
@@ -211,6 +215,22 @@ namespace UtilityTool.Frontend.Tabs
                 foreach (var app in apps) if (selectedApps.Contains(app.Id)) savedApps[app.Id] = app;
                 appsLoaded = true;
                 FilterApps();
+                var priority = new List<InstalledApp>();
+                var queued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in installedApps.Items)
+                {
+                    if (!item.Bounds.IntersectsWith(installedApps.ClientRectangle)) continue;
+                    var app = (InstalledApp)item.Tag; priority.Add(app); queued.Add(app.Id);
+                }
+                foreach (var app in apps) if (queued.Add(app.Id)) priority.Add(app);
+                var progress = new Progress<Dictionary<string, Bitmap>>(delegate(Dictionary<string, Bitmap> batch)
+                {
+                    try { if (!IsDisposed && !Disposing) installedApps.SetIcons(batch); }
+                    finally { foreach (var image in batch.Values) image.Dispose(); }
+                });
+                var images = await AppIconService.LoadAsync(priority, installedApps.IconSize, iconCancellation.Token, progress);
+                try { if (!IsDisposed) installedApps.SetIcons(images, false); }
+                finally { foreach (var image in images.Values) image.Dispose(); }
             }
             catch (Exception error)
             {
@@ -297,8 +317,7 @@ namespace UtilityTool.Frontend.Tabs
 
         private void UpdateGuardControls()
         {
-            // Native disabled list views use a system background instead of our dark theme.
-            // Keep scrolling/search available; ItemCheck already rejects changes while armed.
+            // Keep scrolling/search available; ItemCheck rejects changes while armed.
             installedApps.Enabled = true;
             installedApps.CheckOnClick = !guard.IsArmed;
             refreshApps.Enabled = !guard.IsArmed && !loadingApps;
@@ -324,8 +343,11 @@ namespace UtilityTool.Frontend.Tabs
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            if (disposing && !resourcesReleased)
             {
+                resourcesReleased = true;
+                iconCancellation.Cancel();
+                iconCancellation.Dispose();
                 saveTimer.Stop();
                 if (selectionDirty) SaveState(savedLocked);
                 saveTimer.Dispose();

@@ -1,91 +1,79 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
-
+using UtilityTool.Backend;
 namespace UtilityTool.Frontend
 {
-    // Native list-view double buffering keeps scrolling out of managed per-row painting.
-    internal sealed class AppChecklist : ListView
+    internal sealed class AppChecklist : TilePicker
     {
-        private bool fittingColumn;
-        [DllImport("user32.dll")]
-        private static extern bool ShowScrollBar(IntPtr window, int bar, bool show);
-        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-        private static extern int GetWindowStyle(IntPtr window, int index);
-
-        private void FitColumn()
-        {
-            if (fittingColumn || !IsHandleCreated || Columns.Count == 0) return;
-            fittingColumn = true;
-            try
-            {
-                // Reserve scrollbar space even before Windows creates the vertical bar.
-                int width = Math.Max(1, ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6);
-                if (Columns[0].Width != width) Columns[0].Width = width;
-                if ((GetWindowStyle(Handle, -16) & 0x00100000) != 0)
-                    ShowScrollBar(Handle, 0, false); // SB_HORZ only; vertical scrolling stays enabled.
-            }
-            finally { fittingColumn = false; }
-        }
-
-        protected override void OnHandleCreated(EventArgs e)
-        {
-            base.OnHandleCreated(e);
-            FitColumn();
-        }
-
-        protected override void WndProc(ref Message message)
-        {
-            // The second press arrives as WM_LBUTTONDBLCLK, not WM_LBUTTONDOWN.
-            // Treat it as another click so rapid checkbox clicks are never skipped.
-            if (message.Msg == 0x0203) message.Msg = 0x0201;
-            int kind = message.Msg;
-            if (kind == 0x000F || kind == 0x0085) FitColumn(); // Before client/non-client paint.
-            base.WndProc(ref message);
-            if (kind == 0x0005 || kind == 0x0047 || kind == 0x0030 ||
-                kind == 0x104D || kind == 0x1008 || kind == 0x1009 || kind == 0x101E)
-                FitColumn(); // Resize, font, item and column changes.
-        }
-
+        private readonly Dictionary<string, Bitmap> icons = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
+        private readonly Bitmap fallback;
+        private readonly TileIconCache displayIcons = new TileIconCache();
+        internal readonly List<AppChecklistItem> Items = new List<AppChecklistItem>();
+        internal event ItemCheckEventHandler ItemCheck;
+        internal int IconSize { get { return 120; } }
         internal bool CheckOnClick { get; set; }
+        protected override int TileCount { get { return Items == null ? 0 : Items.Count; } }
+        protected override string TileName(int index) { return Items[index].App.Name; }
+        protected override bool TileChecked(int index) { return Items[index].Checked; }
+        protected override bool TileCanToggle(int index) { return CheckOnClick; }
+        protected override void ToggleTile(int index) { Items[index].Checked = !Items[index].Checked; }
         internal AppChecklist()
         {
-            View = View.Details;
-            HeaderStyle = ColumnHeaderStyle.None;
-            CheckBoxes = true;
-            FullRowSelect = true;
-            MultiSelect = false;
-            HideSelection = false;
-            BorderStyle = BorderStyle.FixedSingle;
-            BackColor = AppTheme.Panel;
-            ForeColor = AppTheme.Ink;
-            Columns.Add("Installed app");
-            DoubleBuffered = true;
             CheckOnClick = true;
+            fallback = new Bitmap(IconSize, IconSize);
+            using (var graphics = Graphics.FromImage(fallback)) graphics.DrawIcon(SystemIcons.Application, new Rectangle(0, 0, IconSize, IconSize));
         }
-
-        internal void AddApp(UtilityTool.Backend.InstalledApp app, bool isChecked)
+        internal void AddApp(InstalledApp app, bool isChecked)
         {
-            Items.Add(new ListViewItem(app.ToString()) { Tag = app, Checked = isChecked });
+            Items.Add(new AppChecklistItem(this, app, Items.Count, isChecked)); ItemsChanged();
+        }
+        internal void SetIcons(Dictionary<string, Bitmap> images, bool replaceExisting = true)
+        {
+            var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in images)
+            {
+                Bitmap old;
+                if (icons.TryGetValue(pair.Key, out old) && !replaceExisting) continue;
+                icons[pair.Key] = (Bitmap)pair.Value.Clone();
+                if (old != null) { displayIcons.Remove(old); old.Dispose(); }
+                changed.Add(pair.Key);
+            }
+            if (changed.Count != 0) RefreshTiles(delegate(int index) { return changed.Contains(Items[index].App.Id); });
         }
         internal void SetItemChecked(int index, bool value) { Items[index].Checked = value; }
         internal bool GetItemChecked(int index) { return Items[index].Checked; }
-
-        protected override void OnMouseDown(MouseEventArgs e)
+        internal void ChangeCheck(AppChecklistItem item, bool value)
         {
-            var hit = HitTest(e.Location);
-            // Native state-image clicks already toggle the checkbox.
-            bool toggle = Enabled && CheckOnClick && e.Button == MouseButtons.Left && hit.Item != null
-                && (hit.Location & ListViewHitTestLocations.StateImage) == 0;
-            base.OnMouseDown(e);
-            if (toggle) hit.Item.Checked = !hit.Item.Checked;
+            if (item.IsChecked == value || item.Index >= Items.Count || Items[item.Index] != item) return;
+            var args = new ItemCheckEventArgs(item.Index, value ? CheckState.Checked : CheckState.Unchecked, item.IsChecked ? CheckState.Checked : CheckState.Unchecked);
+            var handler = ItemCheck; if (handler != null) handler(this, args);
+            item.IsChecked = args.NewValue == CheckState.Checked; CheckChanged(item.Index);
         }
-
-        protected override void OnSizeChanged(EventArgs e)
+        protected override void DrawTile(Graphics graphics, int index, Rectangle bounds, bool hovered, bool focused, TileTextStyle textStyle)
         {
-            base.OnSizeChanged(e);
-            FitColumn();
+            var item = Items[index]; Bitmap image;
+            if (!icons.TryGetValue(item.App.Id, out image)) image = fallback;
+            SelectionTileRenderer.Draw(graphics, bounds, textStyle, item.App.Name, item.Checked, hovered,
+                focused, Enabled, true, item.Checked ? "SELECTED" : "",
+                delegate(Graphics iconGraphics) { displayIcons.Draw(iconGraphics, image); });
         }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { displayIcons.Dispose(); fallback.Dispose(); foreach (var image in icons.Values) image.Dispose(); icons.Clear(); }
+            base.Dispose(disposing);
+        }
+    }
+    internal sealed class AppChecklistItem
+    {
+        private readonly AppChecklist owner;
+        internal readonly InstalledApp App;
+        internal readonly int Index;
+        internal bool IsChecked;
+        internal object Tag { get { return App; } }
+        internal Rectangle Bounds { get { return owner.ItemBounds(Index); } }
+        internal bool Checked { get { return IsChecked; } set { owner.ChangeCheck(this, value); } }
+        internal AppChecklistItem(AppChecklist picker, InstalledApp app, int index, bool selected) { owner = picker; App = app; Index = index; IsChecked = selected; }
     }
 }

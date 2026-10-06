@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Globalization;
 using System.Collections.Generic;
@@ -40,7 +40,7 @@ namespace UtilityTool.Frontend.Tabs
             }, 0, 1);
             layout.Controls.Add(new Label
             {
-                Text = "A calmer space for everyday Windows tasks.\n\nSHUTDOWN\nChoose a delay, schedule a shutdown, or cancel a pending one.\n\nLOCK\nChoose apps to protect with your custom password.\n\nMove, resize, and minimize this window using the standard Windows controls.",
+                Text = "A calmer space for everyday Windows tasks.\n\nSHUTDOWN\nChoose a delay, schedule a shutdown, or cancel a pending one.\n\nLOCK\nChoose apps to protect with your custom password.\n\nSOUND\nPlay Windows audio through multiple speakers or headphones.\n\nMove, resize, and minimize this window using the standard Windows controls.",
                 Dock = DockStyle.Fill,
                 Padding = new Padding(0, 20, 0, 0),
                 ForeColor = AppTheme.Muted

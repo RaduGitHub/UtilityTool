@@ -10,8 +10,9 @@ namespace UtilityTool
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            bool background = Array.Exists(args, delegate(string arg) { return string.Equals(arg, "--background", StringComparison.OrdinalIgnoreCase); });
-            Application.Run(new MainWindow(background));
+            // bool background = Array.Exists(args, delegate(string arg) { return string.Equals(arg, "--background", StringComparison.OrdinalIgnoreCase); });
+            // Application.Run(new MainWindow(background)); // Background mode temporarily disabled.
+            Application.Run(new MainWindow());
         }
     }
 }

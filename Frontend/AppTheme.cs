@@ -16,6 +16,16 @@ namespace UtilityTool.Frontend
         internal static readonly Color AccentInk = Color.FromArgb(18, 25, 43);
         internal static readonly Color Warning = Color.FromArgb(241, 190, 115);
         internal static readonly Color Error = Color.FromArgb(255, 146, 155);
+        internal static readonly Bitmap Grain = CreateGrain();
+        private static Bitmap CreateGrain()
+        {
+            // The dot pattern repeats every 11 x 63 pixels; paint it once instead of thousands of dots per resize.
+            var image = new Bitmap(11, 63);
+            using (var graphics = Graphics.FromImage(image))
+            using (var dot = new SolidBrush(Color.FromArgb(3, 185, 199, 225)))
+                for (int y = 3; y < image.Height; y += 9) graphics.FillRectangle(dot, y % 7, y, 1, 1);
+            return image;
+        }
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
@@ -63,6 +73,18 @@ namespace UtilityTool.Frontend
         }
         private static void ApplyChildren(Control root) { Apply(root); }
 
+        internal static void UseOpaqueSurfaces(Control root)
+        {
+            // Transparent labels and action rows repeatedly repaint all their ancestors while sizing.
+            var layout = root as FrostedLayout;
+            if (layout != null) layout.FlatSurface = true;
+            foreach (Control child in root.Controls)
+            {
+                if (child is Label || child is FlowLayoutPanel) child.BackColor = Surface;
+                UseOpaqueSurfaces(child);
+            }
+        }
+
         internal static GraphicsPath Rounded(Rectangle bounds, int radius)
         {
             var path = new GraphicsPath();
@@ -85,48 +107,61 @@ namespace UtilityTool.Frontend
         }
     }
 
-    internal sealed class FrostedLayout : TableLayoutPanel
+    internal class BufferedLayout : TableLayoutPanel
+    {
+        internal BufferedLayout()
+        {
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
+        }
+    }
+
+    internal sealed class FrostedLayout : BufferedLayout
     {
         private Bitmap texture;
         internal bool IsCard { get; set; }
+        internal bool FlatSurface { get; set; }
         internal FrostedLayout()
         {
-            DoubleBuffered = true;
             BackColor = AppTheme.Surface;
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true);
-        }
-
-        protected override void OnSizeChanged(EventArgs e)
-        {
-            if (texture != null) { texture.Dispose(); texture = null; }
-            base.OnSizeChanged(e);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
             if (ClientSize.Width == 0 || ClientSize.Height == 0) return;
-            if (texture == null)
+            if (FlatSurface)
             {
-                texture = new Bitmap(Width, Height);
+                using (var surface = new SolidBrush(AppTheme.Surface)) e.Graphics.FillRectangle(surface, e.ClipRectangle);
+                return;
+            }
+            if (texture == null || texture.Width < Width || texture.Height < Height ||
+                (IsCard && (texture.Width != Width || texture.Height != Height)))
+            {
+                if (texture != null) texture.Dispose();
+                // Reuse capacity while dragging; cards keep exact bounds for their rounded edges.
+                int cachedWidth = IsCard ? Width : ((Width + 255) / 256) * 256;
+                int cachedHeight = IsCard ? Height : ((Height + 127) / 128) * 128;
+                // Store premultiplied pixels so every transparent label can copy the background without conversion.
+                texture = new Bitmap(cachedWidth, cachedHeight, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
                 using (var graphics = Graphics.FromImage(texture))
                 {
-                    using (var gradient = new LinearGradientBrush(ClientRectangle,
+                    var textureBounds = new Rectangle(0, 0, cachedWidth, cachedHeight);
+                    using (var gradient = new LinearGradientBrush(textureBounds,
                         AppTheme.Surface, Color.FromArgb(32, 38, 49), 35f))
-                        graphics.FillRectangle(gradient, ClientRectangle);
+                        graphics.FillRectangle(gradient, textureBounds);
                     if (IsCard && Width > 26 && Height > 26)
                     {
                         using (var shape = AppTheme.Rounded(new Rectangle(1, 1, Width - 3, Height - 3), 12))
                         using (var panel = new SolidBrush(AppTheme.Panel))
                             graphics.FillPath(panel, shape);
                     }
-                    using (var grain = new SolidBrush(Color.FromArgb(3, 185, 199, 225)))
-                        for (int y = 3; y < Height; y += 9)
-                            for (int x = y % 7; x < Width; x += 11)
-                                graphics.FillRectangle(grain, x, y, 1, 1);
+                    using (var grain = new TextureBrush(AppTheme.Grain, WrapMode.Tile)) graphics.FillRectangle(grain, textureBounds);
                 }
             }
-            // Transparent labels and buttons reuse the same pixels instead of redrawing thousands of dots.
-            e.Graphics.DrawImageUnscaled(texture, Point.Empty);
+            // Transparent children request only their small background region; avoid copying the whole panel for each label/button.
+            var clip = Rectangle.Intersect(ClientRectangle, e.ClipRectangle);
+            clip = Rectangle.Intersect(clip, Rectangle.Ceiling(e.Graphics.VisibleClipBounds));
+            if (clip.Width > 0 && clip.Height > 0) e.Graphics.DrawImage(texture, clip, clip, GraphicsUnit.Pixel);
         }
 
         protected override void Dispose(bool disposing)
