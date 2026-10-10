@@ -1,7 +1,11 @@
+param([ValidateSet('Debug','Release')][string]$Configuration = 'Debug')
 $ErrorActionPreference = 'Stop'
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (!(Test-Path -LiteralPath $compiler)) {
-    $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+$sdk = Join-Path $PSScriptRoot '.tools\dotnet\dotnet.exe'
+if (!(Test-Path -LiteralPath $sdk)) {
+    $installedSdk = Get-Command dotnet -ErrorAction SilentlyContinue
+    if (!$installedSdk) { throw 'Install a .NET SDK (8 or later), or use Visual Studio with the .NET desktop development workload.' }
+    $sdk = $installedSdk.Source
 }
-& $compiler /nologo /target:winexe /optimize+ /reference:System.Security.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll "/out:$PSScriptRoot\UtilityTool.exe" "$PSScriptRoot\Program.cs" "/recurse:$PSScriptRoot\Frontend\*.cs" "/recurse:$PSScriptRoot\Backend\*.cs"
+& $sdk build (Join-Path $PSScriptRoot 'UtilityTool.sln') --configuration $Configuration
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+Write-Host "Run: $PSScriptRoot\bin\$Configuration\net48\UtilityTool.exe"
