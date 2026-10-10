@@ -16,6 +16,7 @@ Frontend/AppTheme.cs defines the Graphite dark surfaces, rounded buttons, periwi
 Frontend/MainWindow.cs creates the window and coordinates tabs and closing.
 Frontend/Tabs/HomeTab.cs contains the introduction.
 Frontend/Tabs/ShutdownTab.cs contains shutdown controls and countdown presentation.
+Frontend/DurationPicker.cs provides Windows Clock-style hour/minute/second fields with arrow buttons, direct typing, and keyboard up/down adjustments. Hours range from 00 to 99; minutes and seconds from 00 to 59. The default delay is one minute, and an all-zero duration is rejected. The countdown uses HH:MM:SS.
 Frontend/Tabs/LockTab.cs contains app selection and password-guard actions.
 Frontend/Tabs/SoundTab.cs contains audio-device selection and start/stop controls.
 Frontend/AudioDevicePicker.cs uses cached device icons, names, selection marks and primary-output labels on a single drawing surface.

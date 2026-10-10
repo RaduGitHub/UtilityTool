@@ -9,7 +9,7 @@ namespace UtilityTool.Frontend.Tabs
 {
     internal sealed class ShutdownTab : BufferedTabPage
     {
-        private readonly TextBox shutdownSeconds = new TextBox();
+        private readonly DurationPicker shutdownDuration = new DurationPicker();
         private readonly Button scheduleButton = new ModernButton();
         private readonly Button cancelButton = new ModernButton();
         private readonly Label shutdownStatus = new Label();
@@ -21,13 +21,13 @@ namespace UtilityTool.Frontend.Tabs
             var content = new FrostedLayout
             {
                 Dock = DockStyle.Fill, Padding = new Padding(36),
-                ColumnCount = 1, RowCount = 5
+                ColumnCount = 1, RowCount = 6
             };
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 192));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 296));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
             content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             content.Controls.Add(new Label
             {
@@ -36,7 +36,7 @@ namespace UtilityTool.Frontend.Tabs
             }, 0, 0);
             content.Controls.Add(new Label
             {
-                Text = "Choose how many seconds Windows should wait before shutting down.",
+                Text = "Choose a delay in hours, minutes, and seconds. Type a value or use the arrows.",
                 Dock = DockStyle.Fill
             }, 0, 1);
             var card = new FrostedLayout {
@@ -45,15 +45,11 @@ namespace UtilityTool.Frontend.Tabs
             card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             card.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
             content.Controls.Add(card, 0, 2);
-            var input = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown };
-            input.Controls.Add(new Label { Text = "Delay in seconds", AutoSize = true });
-            shutdownSeconds.Text = "60";
-            shutdownSeconds.Width = 220;
-            shutdownSeconds.MaxLength = 9;
-            shutdownSeconds.AccessibleName = "Shutdown delay in seconds";
-            input.Controls.Add(shutdownSeconds);
-            card.Controls.Add(input, 0, 0);
-            var actions = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            shutdownDuration.Anchor = AnchorStyles.Top;
+            shutdownDuration.Margin = Padding.Empty;
+            card.Controls.Add(shutdownDuration, 0, 0);
+            var actions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Anchor = AnchorStyles.Top, WrapContents = false, Margin = Padding.Empty };
             scheduleButton.Text = "Schedule shutdown";
             scheduleButton.AutoSize = true;
             scheduleButton.Padding = new Padding(12, 5, 12, 5);
@@ -70,11 +66,13 @@ namespace UtilityTool.Frontend.Tabs
                 Text = "Save your work first. Windows will force apps to close at the scheduled time.\nThe shutdown remains scheduled if you close UtilityTool. Cancel stops any pending Windows shutdown.",
                 ForeColor = AppTheme.Warning, Dock = DockStyle.Fill
             }, 0, 3);
-            shutdownStatus.Text = "Enter a whole number from 1 to 315,360,000 seconds.";
+            shutdownStatus.Text = "Choose a duration, then schedule shutdown.";
             shutdownStatus.Dock = DockStyle.Fill;
             content.Controls.Add(shutdownStatus, 0, 4);
             Controls.Add(content);
             AppTheme.Apply(this);
+            cancelButton.Margin = new Padding(0, 3, 0, 3);
+            shutdownDuration.ApplyAppearance();
             countdownTimer.Interval = 1000;
             countdownTimer.Tick += delegate { UpdateCountdown(); };
         }
@@ -82,11 +80,11 @@ namespace UtilityTool.Frontend.Tabs
         private async Task ScheduleShutdown()
         {
             int seconds;
-            if (!ShutdownService.TryParseSeconds(shutdownSeconds.Text, out seconds))
+            string errorMessage;
+            if (!shutdownDuration.TryGetSeconds(out seconds, out errorMessage))
             {
-                shutdownStatus.Text = "Enter a whole number from 1 to 315,360,000 seconds.";
+                shutdownStatus.Text = errorMessage;
                 shutdownStatus.ForeColor = AppTheme.Error;
-                shutdownSeconds.Focus();
                 return;
             }
             SetBusy(true);
@@ -137,7 +135,7 @@ namespace UtilityTool.Frontend.Tabs
         {
             scheduleButton.Enabled = !busy && !shutdownAt.HasValue;
             cancelButton.Enabled = !busy;
-            shutdownSeconds.Enabled = !busy && !shutdownAt.HasValue;
+            shutdownDuration.Enabled = !busy && !shutdownAt.HasValue;
         }
 
         private void UpdateCountdown()
@@ -145,9 +143,14 @@ namespace UtilityTool.Frontend.Tabs
             if (!shutdownAt.HasValue) return;
             long remaining = Math.Max(0, (long)Math.Ceiling((shutdownAt.Value - DateTimeOffset.Now).TotalSeconds));
             shutdownStatus.Text = remaining > 0
-                ? "Windows shutdown scheduled. About " + remaining.ToString(CultureInfo.CurrentCulture) + " seconds remaining."
+                ? "Windows will shut down in " + FormatDuration(remaining) + " (at " + shutdownAt.Value.ToString("t", CultureInfo.CurrentCulture) + ")."
                 : "Scheduled shutdown time reached. Windows is handling the shutdown.";
             if (remaining == 0) countdownTimer.Stop();
+        }
+
+        private static string FormatDuration(long seconds)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}:{2:00}", seconds / 3600, seconds / 60 % 60, seconds % 60);
         }
 
         protected override void Dispose(bool disposing)
