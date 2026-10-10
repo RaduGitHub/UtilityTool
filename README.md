@@ -1,5 +1,9 @@
 # UtilityTool
-Windows utilities for shutdown timers, app password guards and multiple audio outputs.
+Everyday Windows utilities in one application.
+
+- Shutdown timers.
+- App locking with custom passwords.
+- Playback through multiple sound outputs.
 
 The `ui-redesign` branch tries a native WPF frontend with [WPF UI](https://github.com/lepoco/wpfui) 4.3.0. The original WinForms app is preserved on `main`.
 
