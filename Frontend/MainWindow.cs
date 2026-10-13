@@ -32,27 +32,17 @@ namespace UtilityTool.Frontend
             HandleCreated += delegate { AppTheme.ApplyWindowFrame(this); };
             BackColor = AppTheme.Surface;
             var tabs = new ModernTabs { Dock = DockStyle.Fill };
-            var lockTab = new LockTab();
             var soundTab = new SoundTab();
             tabs.TabPages.Add(new HomeTab());
             tabs.TabPages.Add(new ShutdownTab());
-            tabs.TabPages.Add(lockTab);
+            // Lock is temporarily hidden; saved locks must not arm without an unlock tab.
             tabs.TabPages.Add(soundTab);
             tabs.TabPages.Add(new SettingsTab());
             tabs.SelectedIndexChanged += async delegate
             {
-                if (tabs.SelectedTab == lockTab && lockTab.NeedsLoading) await lockTab.LoadInstalledApps();
                 if (tabs.SelectedTab == soundTab && soundTab.NeedsLoading) await soundTab.LoadDevices();
             };
             Controls.Add(tabs);
-            Shown += async delegate
-            {
-                if (!IsDisposed && lockTab.NeedsLoading) await lockTab.LoadInstalledApps();
-            };
-            HandleCreated += delegate
-            {
-                BeginInvoke((System.Action)delegate { if (!IsDisposed) lockTab.InitializeSavedLocks(); });
-            };
             /* Background/tray mode temporarily disabled.
             trayMenu = new ContextMenuStrip();
             trayMenu.Items.Add("Open UtilityTool", null, delegate { RestoreWindow(); });
@@ -83,11 +73,6 @@ namespace UtilityTool.Frontend
                 }
             };
             */
-            FormClosing += delegate(object sender, FormClosingEventArgs e)
-            {
-                // X and Alt+F4 exit; active locks still require the custom password.
-                if (e.CloseReason == CloseReason.UserClosing && !lockTab.CanClose()) e.Cancel = true;
-            };
         }
 
         /* Background/tray mode temporarily disabled.

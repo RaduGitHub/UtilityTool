@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Shell;
 using global::Wpf.Ui.Controls;
 namespace UtilityTool.Frontend.Wpf
 {
@@ -15,12 +16,14 @@ namespace UtilityTool.Frontend.Wpf
         internal readonly ShutdownPage Shutdown;
         internal readonly LockPage Lock;
         internal readonly SoundPage Sound;
+        internal readonly SoundboardPage Soundboard;
         internal readonly bool Preview;
         internal string CurrentPage { get; private set; }
-        internal FluentMainWindow(bool preview = false)
+        private WindowResizeBehavior resizing;
+        internal FluentMainWindow(bool preview = false, Func<Window, bool, SoundboardPage> soundboardFactory = null)
         {
             Preview = preview;
-            Title = preview ? "UtilityTool · Preview" : "UtilityTool"; Width = MinWidth = 1040; Height = MinHeight = 740;
+            Title = preview ? "UtilityTool · Sample preview (actions disabled)" : "UtilityTool"; Width = MinWidth = 1040; Height = MinHeight = 740;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ExtendsContentIntoTitleBar = true; WindowBackdropType = WindowBackdropType.Mica;
             Background = new SolidColorBrush(Color.FromRgb(28, 32, 39)); Foreground = Brushes.WhiteSmoke;
@@ -33,14 +36,29 @@ namespace UtilityTool.Frontend.Wpf
             layout.Children.Add(titleBar);
             var nav = new DockPanel { Margin = new Thickness(20, 8, 20, 0), LastChildFill = false };
             var settings = Nav("Settings", "\uE713"); DockPanel.SetDock(settings, Dock.Right); nav.Children.Add(settings);
-            foreach (var item in new[] { new[] { "Home", "\uE80F" }, new[] { "Shutdown", "\uE823" }, new[] { "Lock", "\uE72E" }, new[] { "Sound", "\uE767" } }) nav.Children.Add(Nav(item[0], item[1]));
+            foreach (var item in new[] { new[] { "Home", "\uE80F" }, new[] { "Shutdown", "\uE823" }, new[] { "Sound", "\uE767" }, new[] { "Soundboard", "\uE8D6" } }) nav.Children.Add(Nav(item[0], item[1]));
             Grid.SetRow(nav, 1); layout.Children.Add(nav); Grid.SetRow(content, 2); layout.Children.Add(content);
             Shutdown = new ShutdownPage(preview); Lock = new LockPage(this, preview); Sound = new SoundPage(preview);
-            pages["Home"] = new HomePage(SelectPage, preview); pages["Shutdown"] = Shutdown; pages["Lock"] = Lock; pages["Sound"] = Sound; pages["Settings"] = new SettingsPage(preview);
+            Soundboard = soundboardFactory == null ? new SoundboardPage(this, preview) : soundboardFactory(this, preview);
+            pages["Home"] = new HomePage(SelectPage, preview); pages["Shutdown"] = Shutdown; pages["Sound"] = Sound; pages["Soundboard"] = Soundboard; pages["Settings"] = new SettingsPage(preview);
             Content = layout; SelectPage("Home");
-            Loaded += async delegate { Lock.InitializeSavedLocks(); if (Lock.NeedsLoading) await Lock.LoadApps(); };
+            // Lock is temporarily hidden. Do not arm saved locks without an unlock tab.
+            Loaded += async delegate { await Soundboard.InitializeAsync(); };
             Closing += OnClosing;
-            Closed += delegate { Shutdown.Dispose(); Lock.Dispose(); Sound.Dispose(); };
+            Closed += delegate { if (resizing != null) resizing.Dispose(); Shutdown.Dispose(); Lock.Dispose(); Sound.Dispose(); Soundboard.Dispose(); };
+        }
+        protected override void SetWindowChrome()
+        {
+            base.SetWindowChrome();
+            var chrome = WindowChrome.GetWindowChrome(this);
+            if (chrome != null && (ResizeMode == ResizeMode.CanResize || ResizeMode == ResizeMode.CanResizeWithGrip))
+                chrome.ResizeBorderThickness = new Thickness(WindowResizeBehavior.BorderSize);
+        }
+        protected override void OnContentRendered(EventArgs e)
+        {
+            base.OnContentRendered(e);
+            // Attach after the Fluent title bar so the resize border takes priority.
+            if (resizing == null) resizing = new WindowResizeBehavior(this);
         }
         private global::Wpf.Ui.Controls.Button Nav(string name, string glyph)
         {
@@ -55,13 +73,13 @@ namespace UtilityTool.Frontend.Wpf
             if (!pages.ContainsKey(name)) return;
             CurrentPage = name; content.Content = pages[name];
             foreach (var pair in navigation) pair.Value.Appearance = pair.Key == name ? ControlAppearance.Primary : ControlAppearance.Transparent;
-            if (name == "Lock" && Lock.NeedsLoading) await Lock.LoadApps();
             if (name == "Sound" && Sound.NeedsLoading) await Sound.LoadDevices();
+            if (name == "Soundboard" && Soundboard.NeedsLoading) await Soundboard.LoadSounds();
         }
         private void OnClosing(object sender, CancelEventArgs e)
         {
             if (!Lock.CanClose()) e.Cancel = true;
-            // X closes the app. Saved locks remain available for the next launch.
+            // X closes the app and releases all audio streams.
         }
     }
 }

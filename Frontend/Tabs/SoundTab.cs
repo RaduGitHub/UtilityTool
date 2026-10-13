@@ -94,14 +94,14 @@ namespace UtilityTool.Frontend.Tabs
                     if (previous != null && device.Id == previous.Id) selected = device;
                 }
                 if (selected == null) selected = devices.Find(device => device.IsDefault);
-                if (selected == null && devices.Count > 0) selected = devices[0];
                 source.SelectedItem = selected;
                 updating = false; RebuildAdditional(); loaded = true;
-                SetStatus(devices.Count == 0 ? "No active audio outputs found. Connect a device, then refresh."
+                SetStatus(devices.Count == 0 ? "No speakers or headphones found. Connect a device, then refresh."
+                    : selected == null ? "Set speakers or headphones as Windows' default output, then refresh. Use virtual cable devices in Soundboard."
                     : devices.Count == 1 ? "Only one output is available. Connect another speaker or headphones, then refresh."
                     : "Choose one or more additional outputs, then press Start multiple outputs.", false);
             }
-            catch (Exception error) { if (!IsDisposed) SetStatus("Could not load audio devices: " + error.Message, true); }
+            catch (Exception error) { if (!IsDisposed) SetStatus("Could not load audio devices: " + error.Message + " Press Refresh devices to try again.", true); }
             finally { updating = false; if (!IsDisposed) { busy = false; UpdateControls(); } }
         }
         private void RebuildAdditional()

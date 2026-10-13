@@ -110,7 +110,7 @@ namespace UtilityTool.Frontend.Wpf
             if (!preview) { dirty = true; saveTimer.Stop(); saveTimer.Start(); } UpdateCount(); UpdateControls();
         }
         private void Filter() { var filtered = catalog.FindAll(item => item.Name.IndexOf(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase) >= 0); Tiles.SetItems(filtered); if (loaded) UpdateCount(); }
-        private void UpdateCount() { count.Text = catalog.Count + " apps · " + selected.Count + " selected. System tools and unsupported apps are hidden."; }
+        private void UpdateCount() { count.Text = preview ? "Sample preview: " + catalog.Count + " example apps. Use the Run UtilityTool task for your installed apps." : catalog.Count + " apps · " + selected.Count + " selected. System tools and unsupported apps are hidden."; }
         private bool Save(bool locked)
         {
             if (preview || stateStore == null) return false;

@@ -16,6 +16,8 @@
   <ItemGroup>
     <None Update="ThirdParty\*" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="WPF-UI" Version="4.3.0" />
+    <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <Reference Include="System.Security" />
     <Compile Include="Program.cs" />
     <Compile Include="Frontend\**\*.cs" Exclude="Frontend\TileIconCache.cs;Frontend\DrawingBitmapCache.cs" />

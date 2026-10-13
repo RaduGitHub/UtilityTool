@@ -9,6 +9,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Input;
 namespace UtilityTool.Frontend.Wpf
 {
     internal sealed class TileItem : INotifyPropertyChanged
@@ -20,12 +21,20 @@ namespace UtilityTool.Frontend.Wpf
         private bool selected, editable = true;
         private ImageSource icon;
         public object Tag { get; private set; }
-        public bool Selected { get { return selected; } set { if (selected == value) return; selected = value; Changed("Selected"); if (SelectionChanged != null) SelectionChanged(this); } }
+        public bool IsPrimary { get; private set; }
+        private readonly string selectedLabel;
+        public bool HasRole { get { return IsPrimary || !string.IsNullOrEmpty(selectedLabel); } }
+        public ICommand PlayCommand { get; private set; }
+        public ICommand OptionsCommand { get; private set; }
+        public bool IsSound { get { return PlayCommand != null; } }
+        public string RoleLabel { get { return IsPrimary ? "PRIMARY OUTPUT" : Selected ? selectedLabel : ""; } }
+        public bool Selected { get { return selected; } set { if (IsPrimary && !value || selected == value) return; selected = value; Changed("Selected"); Changed("RoleLabel"); if (SelectionChanged != null) SelectionChanged(this); } }
         public bool Editable { get { return editable; } set { editable = value; Changed("Editable"); } }
         public ImageSource Icon { get { return icon; } set { icon = value; Changed("Icon"); Changed("Glyph"); } }
         internal event Action<TileItem> SelectionChanged;
         public event PropertyChangedEventHandler PropertyChanged;
-        internal TileItem(string id, string name, object tag, bool selected = false, string glyph = "\uE8A5") { Id = id; Name = name; Tag = tag; this.selected = selected; fallback = glyph; }
+        internal TileItem(string id, string name, object tag, bool selected = false, string glyph = "\uE8A5", bool isPrimary = false, string selectedLabel = "", ICommand playCommand = null, ICommand optionsCommand = null)
+        { Id = id; Name = name; Tag = tag; IsPrimary = isPrimary; this.selected = selected || isPrimary; editable = !isPrimary; fallback = glyph; this.selectedLabel = selectedLabel; PlayCommand = playCommand; OptionsCommand = optionsCommand; }
         private void Changed(string name) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(name)); }
     }
     internal sealed class TileRow : INotifyPropertyChanged

@@ -22,7 +22,19 @@ namespace UtilityTool.Backend
         internal static readonly Guid RenderClientId = new Guid("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
         internal static void Check(int result) { Marshal.ThrowExceptionForHR(result); }
         internal static void Release(object value) { if (value != null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value); }
-        internal static IMMDeviceEnumerator CreateEnumerator() { return (IMMDeviceEnumerator)new MMDeviceEnumerator(); }
+        internal static IMMDeviceEnumerator CreateEnumerator()
+        {
+            // Windows can reuse this COM identity while NAudio has an enumerator
+            // alive. A unique wrapper avoids competing imported coclass types
+            // and keeps each audio service's releases independent of the other.
+            Guid clsid = new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E");
+            Guid unknownId = new Guid("00000000-0000-0000-C000-000000000046");
+            IntPtr unknown;
+            Check(CoCreateInstance(ref clsid, IntPtr.Zero, 23, ref unknownId, out unknown));
+            try { return (IMMDeviceEnumerator)Marshal.GetUniqueObjectForIUnknown(unknown); }
+            finally { Marshal.Release(unknown); }
+        }
+        [DllImport("ole32.dll")] private static extern int CoCreateInstance(ref Guid clsid, IntPtr outer, uint context, ref Guid iid, out IntPtr instance);
         internal static IAudioClient Open(IMMDeviceEnumerator enumerator, string id)
         {
             IMMDevice device = null;
@@ -37,12 +49,32 @@ namespace UtilityTool.Backend
         }
         internal static List<AudioOutputDevice> GetOutputs()
         {
-            IMMDeviceEnumerator enumerator = null; IMMDeviceCollection devices = null; IMMDevice defaultDevice = null;
+            IMMDeviceEnumerator enumerator = null;
+            try { enumerator = CreateEnumerator(); return GetOutputs(enumerator); }
+            finally { Release(enumerator); }
+        }
+        internal static bool IsVirtualOutput(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            string value = name.ToLowerInvariant();
+            return value.Contains("vb-audio") || value.Contains("voicemeeter") || value.Contains("voicemod")
+                || value.Contains("virtual audio cable") || value.Contains("virtual cable")
+                || value.StartsWith("cable input", StringComparison.Ordinal) || value.StartsWith("cable in ", StringComparison.Ordinal);
+        }
+        // Device installation/removal can invalidate one endpoint while the
+        // collection is being read. Keep the other speakers/headphones usable.
+        internal static List<AudioOutputDevice> GetOutputs(IMMDeviceEnumerator enumerator)
+        {
+            IMMDeviceCollection devices = null; IMMDevice defaultDevice = null;
             try
             {
-                enumerator = CreateEnumerator();
                 string defaultId = null;
-                if (enumerator.GetDefaultAudioEndpoint(0, 1, out defaultDevice) >= 0) Check(defaultDevice.GetId(out defaultId));
+                try
+                {
+                    if (enumerator.GetDefaultAudioEndpoint(0, 1, out defaultDevice) >= 0 && defaultDevice != null)
+                        Check(defaultDevice.GetId(out defaultId));
+                }
+                catch (COMException error) { defaultId = null; System.Diagnostics.Trace.WriteLine(error); }
                 Check(enumerator.EnumAudioEndpoints(0, 1, out devices)); // Render endpoints, active devices only.
                 uint count; Check(devices.GetCount(out count));
                 var result = new List<AudioOutputDevice>();
@@ -52,40 +84,58 @@ namespace UtilityTool.Backend
                     try
                     {
                         Check(devices.Item(index, out device));
+                        if (device == null) continue;
                         string id; Check(device.GetId(out id));
+                        if (string.IsNullOrWhiteSpace(id)) continue;
                         string name = id;
                         uint formFactor = 1;
-                        if (device.OpenPropertyStore(0, out properties) >= 0)
+                        try
                         {
-                            var key = new PropertyKey { FormatId = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), PropertyId = 14 };
-                            PropVariant value;
-                            if (properties.GetValue(ref key, out value) >= 0)
+                            if (device.OpenPropertyStore(0, out properties) >= 0 && properties != null)
                             {
-                                try { if (value.Type == 31 && value.Pointer != IntPtr.Zero) name = Marshal.PtrToStringUni(value.Pointer); }
-                                finally { PropVariantClear(ref value); }
-                            }
-                            // Read the endpoint's physical type to choose a monitor, headset or speaker icon.
-                            key = new PropertyKey { FormatId = new Guid("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), PropertyId = 0 };
-                            if (properties.GetValue(ref key, out value) >= 0)
-                            {
-                                try { if (value.Type == 19) formFactor = value.UnsignedValue; }
-                                finally { PropVariantClear(ref value); }
+                                string friendlyName = ReadText(properties, new PropertyKey { FormatId = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), PropertyId = 14 });
+                                string description = ReadText(properties, new PropertyKey { FormatId = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), PropertyId = 2 });
+                                if (IsVirtualOutput(friendlyName) || IsVirtualOutput(description)) continue;
+                                if (!string.IsNullOrWhiteSpace(friendlyName)) name = friendlyName;
+                                else if (!string.IsNullOrWhiteSpace(description)) name = description;
+                                formFactor = ReadFormFactor(properties);
                             }
                         }
+                        catch (COMException error) { System.Diagnostics.Trace.WriteLine(error); }
                         result.Add(new AudioOutputDevice(id, name, string.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase), formFactor));
                     }
+                    catch (COMException error) { System.Diagnostics.Trace.WriteLine(error); }
                     finally { Release(properties); Release(device); }
                 }
                 result.Sort(delegate(AudioOutputDevice a, AudioOutputDevice b) { return string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase); });
                 return result;
             }
-            finally { Release(defaultDevice); Release(devices); Release(enumerator); }
+            finally { Release(defaultDevice); Release(devices); }
+        }
+        private static string ReadText(IPropertyStore properties, PropertyKey key)
+        {
+            PropVariant value = default(PropVariant);
+            try
+            {
+                if (properties.GetValue(ref key, out value) >= 0 && value.Type == 31 && value.Pointer != IntPtr.Zero)
+                    return Marshal.PtrToStringUni(value.Pointer);
+                return null;
+            }
+            catch (COMException error) { System.Diagnostics.Trace.WriteLine(error); return null; }
+            finally { PropVariantClear(ref value); }
+        }
+        private static uint ReadFormFactor(IPropertyStore properties)
+        {
+            PropVariant value = default(PropVariant);
+            var key = new PropertyKey { FormatId = new Guid("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), PropertyId = 0 };
+            try { return properties.GetValue(ref key, out value) >= 0 && value.Type == 19 ? value.UnsignedValue : 1; }
+            catch (COMException error) { System.Diagnostics.Trace.WriteLine(error); return 1; }
+            finally { PropVariantClear(ref value); }
         }
         [DllImport("ole32.dll")] private static extern int PropVariantClear(ref PropVariant value);
     }
     [StructLayout(LayoutKind.Sequential, Pack = 4)] internal struct PropertyKey { internal Guid FormatId; internal uint PropertyId; }
     [StructLayout(LayoutKind.Explicit, Size = 24)] internal struct PropVariant { [FieldOffset(0)] internal ushort Type; [FieldOffset(8)] internal IntPtr Pointer; [FieldOffset(8)] internal uint UnsignedValue; }
-    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] internal class MMDeviceEnumerator { }
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IMMDeviceEnumerator
     {

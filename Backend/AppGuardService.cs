@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.ComponentModel;
@@ -15,9 +15,15 @@ namespace UtilityTool.Backend
         private readonly object sync = new object();
         private readonly HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> appIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<VersionedAppExecutable> versionedExecutables = new List<VersionedAppExecutable>();
         private readonly Func<List<GuardProcess>> snapshot;
         private readonly Action<GuardProcess> stop;
         private Timer timer;
+        private WindowEventWatcher windowEvents;
+        private readonly bool nativeEvents;
+        private readonly HashSet<int> queuedProcesses = new HashSet<int>();
+        private readonly HashSet<int> changedProcesses = new HashSet<int>();
+        internal bool EventDriven { get { return windowEvents != null && windowEvents.Active; } }
         private int scanning;
         private bool armed;
         private int generation;
@@ -30,26 +36,40 @@ namespace UtilityTool.Backend
         internal event Action<string> StatusChanged;
         internal bool IsArmed { get { lock (sync) return armed; } }
 
-        internal AppGuardService() : this(GetProcesses, StopProcess) { }
+        internal AppGuardService() : this(GetProcesses, StopProcess) { nativeEvents = true; }
         internal AppGuardService(Func<List<GuardProcess>> getProcesses, Action<GuardProcess> stopProcess)
         { snapshot = getProcesses; stop = stopProcess; }
 
         internal void Arm(IEnumerable<InstalledApp> apps, bool startTimer)
         {
+            var selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selectedVersions = new List<VersionedAppExecutable>();
+            foreach (var app in apps)
+            {
+                if (!app.CanGuard) throw new InvalidOperationException("Cannot guard " + app.Name + ".");
+                foreach (string path in AppGuardTargets.Executables(app)) selectedPaths.Add(path);
+                var versioned = VersionedAppExecutable.From(app);
+                if (versioned != null) selectedVersions.Add(versioned);
+                // A Store app may expose an executable AND a stable app ID.
+                if (app.Id.IndexOf('!') > 0) selectedIds.Add(app.Id);
+            }
+            if (selectedPaths.Count + selectedIds.Count + selectedVersions.Count == 0) throw new InvalidOperationException("Select at least one supported app.");
             lock (sync)
             {
                 paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear(); pending.Clear();
-                foreach (var app in apps)
-                {
-                    if (!app.CanGuard) throw new InvalidOperationException("Cannot guard " + app.Name + ".");
-                    if (!string.IsNullOrEmpty(app.ExecutablePath)) paths.Add(app.ExecutablePath);
-                    else appIds.Add(app.Id);
-                }
-                if (paths.Count + appIds.Count == 0) throw new InvalidOperationException("Select at least one supported app.");
+                paths.UnionWith(selectedPaths); appIds.UnionWith(selectedIds);
+                versionedExecutables.Clear(); versionedExecutables.AddRange(selectedVersions);
                 generation++;
                 armed = true;
-                if (timer != null) timer.Dispose();
-                if (startTimer) timer = new Timer(delegate { ScanOnce(); }, null, 0, 750);
+                if (timer != null) { timer.Dispose(); timer = null; }
+                if (windowEvents != null) { windowEvents.Dispose(); windowEvents = null; }
+                queuedProcesses.Clear(); changedProcesses.Clear();
+                if (startTimer)
+                {
+                    if (nativeEvents) windowEvents = new WindowEventWatcher(OnWindowEvent);
+                    timer = new Timer(delegate { ScanOnce(); }, null, 0, EventDriven ? 3000 : 750);
+                }
             }
         }
 
@@ -59,7 +79,10 @@ namespace UtilityTool.Backend
             {
                 armed = false; generation++;
                 if (timer != null) { timer.Dispose(); timer = null; }
+                if (windowEvents != null) { windowEvents.Dispose(); windowEvents = null; }
+                queuedProcesses.Clear(); changedProcesses.Clear();
                 paths.Clear(); appIds.Clear(); approved.Clear(); rejected.Clear(); pending.Clear();
+                versionedExecutables.Clear();
             }
         }
 
@@ -73,44 +96,112 @@ namespace UtilityTool.Backend
                 var currentProcesses = snapshot();
                 var live = new HashSet<string>();
                 foreach (var item in currentProcesses) live.Add(item.Id + ":" + item.StartTimeTicks);
-                lock (sync) { approved.IntersectWith(live); rejected.IntersectWith(live); }
-                foreach (var process in currentProcesses)
+                lock (sync)
                 {
-                    string identity = process.Id + ":" + process.StartTimeTicks;
-                    lock (sync)
-                    {
-                        if (!armed || generation != version) return;
-                        if (!paths.Contains(process.Path ?? "") && !appIds.Contains(process.AppId ?? "")) continue;
-                        if (approved.Contains(identity) || pending.Contains(identity)) continue;
-                        if (rejected.Contains(identity))
-                        {
-                            try { stop(process); }
-                            catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
-                            continue;
-                        }
-                    }
-                    if (RequestAccessAsync != null)
-                    {
-                        lock (sync) pending.Add(identity);
-                        ObserveAccess(process, identity, version);
-                        continue;
-                    }
-                    bool allowed = RequestAccess != null && RequestAccess(process);
-                    lock (sync)
-                    {
-                        if (!armed || generation != version) return;
-                        if (allowed) { approved.Add(identity); Publish("Access allowed: " + process.Name); }
-                        else
-                        {
-                            rejected.Add(identity);
-                            try { stop(process); Publish("Closed: " + process.Name); }
-                            catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
-                        }
-                    }
+                    if (!armed || generation != version) return;
+                    approved.RemoveWhere(identity => !IsLive(identity, live));
+                    rejected.RemoveWhere(identity => !IsLive(identity, live));
                 }
+                foreach (var process in currentProcesses)
+                    ConsiderProcess(process, version);
             }
             catch (Exception error) { Publish("Guard scan failed: " + error.Message); }
             finally { Interlocked.Exchange(ref scanning, 0); }
+        }
+
+        private void OnWindowEvent(IntPtr window, uint type)
+        {
+            if (type == WindowEventWatcher.Destroy || type == WindowEventWatcher.Hide) return;
+            if (!AppWindows.Visible(window)) return;
+            foreach (int processId in AppWindows.WindowProcessIds(window)) QueueProcess(processId);
+        }
+
+        private void QueueProcess(int processId)
+        {
+            int version;
+            lock (sync)
+            {
+                if (!armed || processId == 0) return;
+                if (!queuedProcesses.Add(processId)) { changedProcesses.Add(processId); return; }
+                version = generation;
+            }
+            // Only inspect the process that created/showed the window. Coalesce its
+            // event burst; never rescan every process on every desktop notification.
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    while (true)
+                    {
+                        var process = ReadProcess(processId);
+                        if (process != null) ConsiderProcess(process, version);
+                        lock (sync)
+                        {
+                            if (!armed || generation != version) return;
+                            if (changedProcesses.Remove(processId)) continue;
+                            queuedProcesses.Remove(processId); return;
+                        }
+                    }
+                }
+                catch (Exception error)
+                {
+                    lock (sync) { if (generation == version) { queuedProcesses.Remove(processId); changedProcesses.Remove(processId); } }
+                    Publish("Guard event failed: " + error.Message);
+                }
+            });
+        }
+
+        private void ConsiderProcess(GuardProcess process, int version)
+        {
+            string identity = process.Id + ":" + process.StartTimeTicks;
+            lock (sync)
+            {
+                if (!armed || generation != version) return;
+                bool matches = paths.Contains(process.Path ?? "") || appIds.Contains(process.AppId ?? "");
+                if (!matches) foreach (var versioned in versionedExecutables) if (versioned.Matches(process.Path)) { matches = true; break; }
+                if (!matches) return;
+                if (approved.Contains(identity) || pending.Contains(identity)) return;
+                if (rejected.Contains(identity))
+                {
+                    try { stop(process); }
+                    catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
+                    return;
+                }
+                // Reserve under the same lock as the checks to avoid duplicate prompts.
+                pending.Add(identity);
+            }
+            if (RequestAccessAsync != null) { ObserveAccess(process, identity, version); return; }
+            bool allowed;
+            try { allowed = RequestAccess != null && RequestAccess(process); }
+            catch { lock (sync) { if (generation == version) pending.Remove(identity); } throw; }
+            lock (sync)
+            {
+                if (!armed || generation != version) return;
+                pending.Remove(identity);
+                if (allowed) { approved.Add(identity); Publish("Access allowed: " + process.Name); }
+                else
+                {
+                    rejected.Add(identity);
+                    try { stop(process); Publish("Closed: " + process.Name); }
+                    catch (Exception error) { Publish("Could not close " + process.Name + ": " + error.Message); }
+                }
+            }
+        }
+
+        private bool IsLive(string identity, HashSet<string> snapshotIdentities)
+        {
+            if (!nativeEvents) return snapshotIdentities.Contains(identity);
+            // Minimized or temporarily hidden windows still belong to the same
+            // approved process. Only revoke its approval when that process exits.
+            string[] parts = identity.Split(':');
+            try
+            {
+                using (var process = Process.GetProcessById(int.Parse(parts[0])))
+                    return !process.HasExited && process.StartTime.ToUniversalTime().Ticks == long.Parse(parts[1]);
+            }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+            catch (Win32Exception) { return false; }
         }
 
         private async void ObserveAccess(GuardProcess process, string identity, int version)
@@ -143,16 +234,24 @@ namespace UtilityTool.Backend
         private static List<GuardProcess> GetProcesses()
         {
             var list = new List<GuardProcess>();
+            // One desktop enumeration, instead of one per running process.
+            foreach (int id in AppWindows.VisibleProcessIds())
+            { var process = ReadProcess(id); if (process != null) list.Add(process); }
+            return list;
+        }
+
+        private static GuardProcess ReadProcess(int id)
+        {
             int ownId, ownSession;
             using (var own = Process.GetCurrentProcess()) { ownId = own.Id; ownSession = own.SessionId; }
-            foreach (var process in Process.GetProcesses())
-                using (process)
+            if (id == ownId) return null;
+            try
+            {
+                using (var process = Process.GetProcessById(id))
                 {
-                    if (process.Id == ownId) continue;
-                    try { if (process.SessionId != ownSession) continue; }
-                    catch (InvalidOperationException) { continue; }
+                    if (process.SessionId != ownSession) return null;
                     IntPtr handle = OpenProcess(0x1000, false, process.Id);
-                    if (handle == IntPtr.Zero) continue;
+                    if (handle == IntPtr.Zero) return null;
                     try
                     {
                         var path = new StringBuilder(32768); int size = path.Capacity;
@@ -160,24 +259,30 @@ namespace UtilityTool.Backend
                         uint length = 0; string appId = "";
                         if (GetApplicationUserModelId(handle, ref length, null) == 122 && length > 0 && length < 32768)
                         {
-                            var id = new StringBuilder((int)length);
-                            if (GetApplicationUserModelId(handle, ref length, id) == 0) appId = id.ToString();
+                            var applicationId = new StringBuilder((int)length);
+                            if (GetApplicationUserModelId(handle, ref length, applicationId) == 0) appId = applicationId.ToString();
                         }
-                        if (AppWindows.Find(process.Id).Count == 0) continue;
-                        list.Add(new GuardProcess(process.Id, process.ProcessName, executable, appId, process.StartTime.ToUniversalTime().Ticks));
+                        return new GuardProcess(process.Id, process.ProcessName, executable, appId, process.StartTime.ToUniversalTime().Ticks);
                     }
-                    catch (InvalidOperationException) { }
                     finally { CloseHandle(handle); }
                 }
-            return list;
+            }
+            catch (ArgumentException) { return null; }
+            catch (InvalidOperationException) { return null; }
+            catch (Win32Exception) { return null; }
         }
 
         private static void StopProcess(GuardProcess target)
         {
-            using (var current = Process.GetProcessById(target.Id))
+            try
             {
-                if (target.StartTimeTicks != 0 && current.StartTime.ToUniversalTime().Ticks != target.StartTimeTicks) return;
+                using (var current = Process.GetProcessById(target.Id))
+                {
+                    if (current.HasExited) return;
+                    if (target.StartTimeTicks != 0 && current.StartTime.ToUniversalTime().Ticks != target.StartTimeTicks) return;
+                }
             }
+            catch (ArgumentException) { return; }
             IntPtr handle = OpenProcess(0x1001, false, target.Id);
             if (handle == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
             try

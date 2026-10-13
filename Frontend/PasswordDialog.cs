@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -12,8 +12,10 @@ namespace UtilityTool.Frontend
         private readonly TextBox password = new TextBox();
         private readonly TextBox confirmation = new TextBox();
         private readonly Label message = new Label();
-        private readonly Button submit = new ModernButton();
+        private readonly Button submit = new ModernButton { Primary = true, FluentPalette = true };
         private bool busy;
+        private readonly bool activateOnShow;
+        protected override bool ShowWithoutActivation { get { return !activateOnShow; } }
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
 
@@ -35,43 +37,62 @@ namespace UtilityTool.Frontend
         }
         internal void CancelForExitedApp() { busy = false; DialogResult = DialogResult.Cancel; Close(); }
 
-        internal PasswordDialog(PasswordStore store, bool create, string title, bool closeOnIncorrect = false, bool focusOnShow = true)
+        internal PasswordDialog(PasswordStore store, bool create, string title, bool closeOnIncorrect = false, bool focusOnShow = true, bool privacyCurtain = false)
         {
-            Text = title; ClientSize = new Size(420, create ? 300 : 245);
+            activateOnShow = focusOnShow;
+            Text = title; ClientSize = new Size(444, (create ? 374 : 306) + (privacyCurtain ? 52 : 0));
             StartPosition = FormStartPosition.CenterParent; FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-            Font = new Font("Segoe UI", 10);
-            HandleCreated += delegate { AppTheme.ApplyWindowFrame(this); };
-            BackColor = AppTheme.Surface;
-            var layout = new FrostedLayout { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = create ? 7 : 5 };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            if (create)
-            {
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            }
+            Font = new Font("Segoe UI", 10.5f);
+            HandleCreated += delegate { AppTheme.ApplyWindowFrame(this, BackColor); };
+            BackColor = AppTheme.FluentSurface; ForeColor = AppTheme.Ink;
+            var layout = new BufferedLayout { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = create ? 8 : 6, BackColor = BackColor };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, privacyCurtain ? 96 : 44));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.Controls.Add(new Label { Text = create ? "Create a custom password (any length for testing)" : "Enter your UtilityTool password", AutoSize = true, MaximumSize = new Size(380, 0) });
-            password.UseSystemPasswordChar = true; password.MaxLength = 0; password.Dock = DockStyle.Top;
-            password.AccessibleName = "UtilityTool password"; password.TabIndex = 0;
-            layout.Controls.Add(password);
             if (create)
             {
-                layout.Controls.Add(new Label { Text = "Confirm password", AutoSize = true });
-                confirmation.UseSystemPasswordChar = true; confirmation.MaxLength = 0; confirmation.Dock = DockStyle.Top;
-                confirmation.AccessibleName = "Confirm UtilityTool password"; layout.Controls.Add(confirmation);
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            }
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            var heading = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            heading.Controls.Add(new Label { Text = title, Font = new Font("Segoe UI Semibold", 18), Dock = DockStyle.Fill, TextAlign = privacyCurtain ? ContentAlignment.MiddleCenter : ContentAlignment.MiddleLeft, AutoEllipsis = true });
+            heading.Controls.Add(new Label { Text = "\uE72E", Font = new Font("Segoe MDL2 Assets", privacyCurtain ? 30 : 23), ForeColor = Color.FromArgb(145, 201, 255), Dock = privacyCurtain ? DockStyle.Top : DockStyle.Left, Width = 46, Height = 52, TextAlign = privacyCurtain ? ContentAlignment.MiddleCenter : ContentAlignment.MiddleLeft });
+            layout.Controls.Add(heading);
+            layout.Controls.Add(new Label { Text = create ? "Choose your own UtilityTool password." : "This app is locked. Enter your password to continue.", ForeColor = AppTheme.FluentMuted, Dock = DockStyle.Fill, Margin = new Padding(0, 6, 0, 0), TextAlign = privacyCurtain ? ContentAlignment.TopCenter : ContentAlignment.TopLeft });
+            layout.Controls.Add(new Label { Text = "Password", Dock = DockStyle.Fill, Margin = new Padding(0) });
+            password.AccessibleName = "UtilityTool password"; password.TabIndex = 0;
+            layout.Controls.Add(new PasswordInputFrame(password));
+            if (create)
+            {
+                layout.Controls.Add(new Label { Text = "Confirm password", Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) });
+                confirmation.AccessibleName = "Confirm UtilityTool password"; layout.Controls.Add(new PasswordInputFrame(confirmation));
             }
             // Reserve status space so "Checking..." never moves the button under the cursor.
-            message.Dock = DockStyle.Fill; message.ForeColor = AppTheme.Error; layout.Controls.Add(message);
-            var buttons = new FlowLayoutPanel { AutoSize = true };
-            submit.Text = create ? "Save password" : "Unlock"; submit.AutoSize = true;
-            var cancel = new ModernButton { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
+            message.Dock = DockStyle.Fill; message.ForeColor = Color.FromArgb(255, 157, 157); message.Margin = new Padding(0, 10, 0, 0); layout.Controls.Add(message);
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = new Padding(0), WrapContents = false };
+            submit.Text = create ? "Save password" : "Unlock"; submit.Size = new Size(144, 42); submit.Margin = new Padding(0, 0, 10, 0);
+            var cancel = new ModernButton { Text = "Cancel", FluentPalette = true, Size = new Size(110, 42), Margin = new Padding(0), DialogResult = DialogResult.Cancel };
             buttons.Controls.Add(submit); buttons.Controls.Add(cancel); layout.Controls.Add(buttons);
-            Controls.Add(layout); AppTheme.Apply(this); AcceptButton = submit; CancelButton = cancel;
+            if (privacyCurtain)
+                buttons.SizeChanged += delegate { buttons.Padding = new Padding(Math.Max(0, (buttons.ClientSize.Width - submit.Width - submit.Margin.Horizontal - cancel.Width) / 2), 0, 0, 0); };
+            Controls.Add(layout); AcceptButton = submit; CancelButton = cancel;
             ActiveControl = password;
+            // This modeless WinForms prompt also runs in WPF's message loop, which
+            // does not route WinForms default-button accelerators. Handle Enter at
+            // the edit controls without moving focus or waiting for key release.
+            KeyEventHandler submitOnEnter = delegate(object sender, KeyEventArgs e)
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                e.Handled = true; e.SuppressKeyPress = true;
+                if (!busy && submit.Enabled) submit.PerformClick();
+            };
+            password.KeyDown += submitOnEnter;
+            confirmation.KeyDown += submitOnEnter;
             // Focus once when opening. Deferred activation callbacks can steal focus
             // between a button's mouse-down and mouse-up, cancelling the first click.
             Shown += delegate { if (focusOnShow) FocusPassword(); };
@@ -99,10 +120,10 @@ namespace UtilityTool.Frontend
                     if (success) { busy = false; DialogResult = DialogResult.OK; Close(); }
                     else if (closeOnIncorrect)
                     {
-                        busy = false;
-                        MessageBox.Show(this, "The password is incorrect, the app will close now.",
-                            "Incorrect password", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        DialogResult = DialogResult.Cancel; Close();
+                        message.Text = "The password is incorrect. The app will close now.";
+                        await Task.Delay(1500);
+                        if (IsDisposed || !Visible) return;
+                        busy = false; DialogResult = DialogResult.Cancel; Close();
                     }
                     else { message.Text = "Incorrect password."; await Task.Delay(1000); }
                 }

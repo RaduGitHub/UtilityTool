@@ -71,9 +71,9 @@ namespace UtilityTool.Frontend.Wpf
         private void Add(DurationField field, string label)
         {
             var panel = new StackPanel { Width = 100 };
-            var up = Ui.Button("\uE70E"); up.FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"); up.Margin = new Thickness(0, 0, 0, 8); up.Appearance = global::Wpf.Ui.Controls.ControlAppearance.Transparent; up.Click += delegate { field.Step(1); }; panel.Children.Add(up);
+            var up = Ui.Button("\uE70E"); up.FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"); up.Margin = new Thickness(0, 0, 0, 8); up.HorizontalAlignment = HorizontalAlignment.Stretch; up.HorizontalContentAlignment = HorizontalAlignment.Center; up.Appearance = global::Wpf.Ui.Controls.ControlAppearance.Transparent; up.Click += delegate { field.Step(1); }; panel.Children.Add(up);
             panel.Children.Add(field);
-            var down = Ui.Button("\uE70D"); down.FontFamily = up.FontFamily; down.Margin = new Thickness(0, 8, 0, 8); down.Appearance = up.Appearance; down.Click += delegate { field.Step(-1); }; panel.Children.Add(down);
+            var down = Ui.Button("\uE70D"); down.FontFamily = up.FontFamily; down.Margin = new Thickness(0, 8, 0, 8); down.HorizontalAlignment = HorizontalAlignment.Stretch; down.HorizontalContentAlignment = HorizontalAlignment.Center; down.Appearance = up.Appearance; down.Click += delegate { field.Step(-1); }; panel.Children.Add(down);
             var caption = Ui.Text(label, 11, true); caption.TextAlignment = TextAlignment.Center; panel.Children.Add(caption); Children.Add(panel);
         }
     }
@@ -87,6 +87,7 @@ namespace UtilityTool.Frontend.Wpf
         {
             this.maximum = maximum; valid = initial.ToString("00"); Text = valid;
             Style = (Style)Application.Current.FindResource(typeof(global::Wpf.Ui.Controls.TextBox));
+            ClearButtonEnabled = false;
             ShowClearButton = false;
             FontSize = 38; FontWeight = FontWeights.SemiBold; TextAlignment = TextAlignment.Center; Padding = new Thickness(4, 8, 4, 8);
             System.Windows.Automation.AutomationProperties.SetName(this, name);
@@ -105,7 +106,7 @@ namespace UtilityTool.Frontend.Wpf
         {
             if (digit < '0' || digit > '9') return;
             int next = (fresh ? 0 : Value % 10) * 10 + digit - '0';
-            if (next > maximum) return;
+            if (next > maximum) next = digit - '0';
             SetValue(next); fresh = false;
         }
         internal void Step(int change) { SetValue((Value + change + maximum + 1) % (maximum + 1)); fresh = true; }

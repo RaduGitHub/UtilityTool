@@ -6,9 +6,10 @@ namespace UtilityTool.Backend
         internal readonly string Id;
         internal readonly string Name;
         internal readonly string ExecutablePath;
+        internal readonly string LaunchArguments;
         internal InstalledApp(string id, string name) : this(id, name, "") { }
-        internal InstalledApp(string id, string name, string executablePath)
-        { Id = id; Name = name; ExecutablePath = executablePath; }
+        internal InstalledApp(string id, string name, string executablePath, string launchArguments = "")
+        { Id = id; Name = name; ExecutablePath = executablePath; LaunchArguments = launchArguments; }
         internal bool CanGuard { get { return !string.IsNullOrEmpty(ExecutablePath) || Id.IndexOf('!') > 0; } }
         public override string ToString() { return Name + (CanGuard ? "" : " (guard unavailable)"); }
     }
