@@ -1,3 +1,7 @@
+# DISCLAIMER
+This is a project that I made for my usage primarily with things that I felt Windows did not have (Shutdown Timer, Soundboard, Multiple Sound Output).
+Every security risk and whatnot is not checked, this will most likely not be updated by me anytime soon. There is some hidden functionality of having it run in background but I never finished it as this was good enough, everything else is written below.
+
 # UtilityTool
 Everyday Windows utilities in one application.
 
