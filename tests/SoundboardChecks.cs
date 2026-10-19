@@ -311,7 +311,7 @@ internal static class SoundboardChecks
         preferences.Save(new SoundboardSettings { Volume = 0.37f, ListeningOutputId = "test-headphones", MicrophoneId = "saved-mic", VirtualOutputId = "saved-cable", CallAudioEnabled = true });
         var sessions = new List<FakeSession>();
         var audio = new SoundboardAudioService((mic, cable, listening) => { var session = new FakeSession(mic, cable, listening); sessions.Add(session); return session; });
-        var startup = new FluentMainWindow(false, (window, preview) => new SoundboardPage(window, preview, library, audio, TestListeningDevices, preferences, TestCallDevices));
+        var startup = new FluentMainWindow(false, (window, preview) => new SoundboardPage(window, preview, library, audio, TestListeningDevices, preferences, TestCallDevices), (window, preview) => new LockPage(window, true));
         startup.Show(); Wait(startup.Soundboard.InitializeAsync(), pump);
         check(startup.CurrentPage == "Home" && audio.IsRouting && sessions.Count == 1, "Saved active call audio resumes on application startup before opening the Soundboard tab");
         check(sessions[0].Microphone == "saved-mic" && sessions[0].Output == "saved-cable" && sessions[0].Listening == "test-headphones" && sessions[0].Volume == 0.37f, "Startup restores the exact selected devices and sound volume before starting call audio");

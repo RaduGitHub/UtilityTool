@@ -20,7 +20,8 @@ namespace UtilityTool.Frontend.Wpf
         internal readonly bool Preview;
         internal string CurrentPage { get; private set; }
         private WindowResizeBehavior resizing;
-        internal FluentMainWindow(bool preview = false, Func<Window, bool, SoundboardPage> soundboardFactory = null)
+        private bool systemSessionEnding;
+        internal FluentMainWindow(bool preview = false, Func<Window, bool, SoundboardPage> soundboardFactory = null, Func<Window, bool, LockPage> lockFactory = null)
         {
             Preview = preview;
             Title = preview ? "UtilityTool · Sample preview (actions disabled)" : "UtilityTool"; Width = MinWidth = 1040; Height = MinHeight = 740;
@@ -36,14 +37,13 @@ namespace UtilityTool.Frontend.Wpf
             layout.Children.Add(titleBar);
             var nav = new DockPanel { Margin = new Thickness(20, 8, 20, 0), LastChildFill = false };
             var settings = Nav("Settings", "\uE713"); DockPanel.SetDock(settings, Dock.Right); nav.Children.Add(settings);
-            foreach (var item in new[] { new[] { "Home", "\uE80F" }, new[] { "Shutdown", "\uE823" }, new[] { "Sound", "\uE767" }, new[] { "Soundboard", "\uE8D6" } }) nav.Children.Add(Nav(item[0], item[1]));
+            foreach (var item in new[] { new[] { "Home", "\uE80F" }, new[] { "Shutdown", "\uE823" }, new[] { "Lock", "\uE72E" }, new[] { "Sound", "\uE767" }, new[] { "Soundboard", "\uE8D6" } }) nav.Children.Add(Nav(item[0], item[1]));
             Grid.SetRow(nav, 1); layout.Children.Add(nav); Grid.SetRow(content, 2); layout.Children.Add(content);
-            Shutdown = new ShutdownPage(preview); Lock = new LockPage(this, preview); Sound = new SoundPage(preview);
+            Shutdown = new ShutdownPage(preview); Lock = lockFactory == null ? new LockPage(this, preview) : lockFactory(this, preview); Sound = new SoundPage(preview);
             Soundboard = soundboardFactory == null ? new SoundboardPage(this, preview) : soundboardFactory(this, preview);
-            pages["Home"] = new HomePage(SelectPage, preview); pages["Shutdown"] = Shutdown; pages["Sound"] = Sound; pages["Soundboard"] = Soundboard; pages["Settings"] = new SettingsPage(preview);
+            pages["Home"] = new HomePage(SelectPage, preview); pages["Shutdown"] = Shutdown; pages["Lock"] = Lock; pages["Sound"] = Sound; pages["Soundboard"] = Soundboard; pages["Settings"] = new SettingsPage(preview);
             Content = layout; SelectPage("Home");
-            // Lock is temporarily hidden. Do not arm saved locks without an unlock tab.
-            Loaded += async delegate { await Soundboard.InitializeAsync(); };
+            Loaded += async delegate { Lock.InitializeSavedLocks(); await Soundboard.InitializeAsync(); };
             Closing += OnClosing;
             Closed += delegate { if (resizing != null) resizing.Dispose(); Shutdown.Dispose(); Lock.Dispose(); Sound.Dispose(); Soundboard.Dispose(); };
         }
@@ -73,13 +73,15 @@ namespace UtilityTool.Frontend.Wpf
             if (!pages.ContainsKey(name)) return;
             CurrentPage = name; content.Content = pages[name];
             foreach (var pair in navigation) pair.Value.Appearance = pair.Key == name ? ControlAppearance.Primary : ControlAppearance.Transparent;
+            if (name == "Lock" && Lock.NeedsLoading) await Lock.LoadApps();
             if (name == "Sound" && Sound.NeedsLoading) await Sound.LoadDevices();
             if (name == "Soundboard" && Soundboard.NeedsLoading) await Soundboard.LoadSounds();
         }
         private void OnClosing(object sender, CancelEventArgs e)
         {
-            if (!Lock.CanClose()) e.Cancel = true;
+            if (!systemSessionEnding && !Lock.CanClose()) e.Cancel = true;
             // X closes the app and releases all audio streams.
         }
+        internal void PrepareForSessionEnd() { systemSessionEnding = true; }
     }
 }

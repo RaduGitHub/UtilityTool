@@ -13,28 +13,40 @@ namespace UtilityTool.Frontend
     {
         private readonly GuardProcess target;
         private readonly Func<IntPtr> foregroundWindow;
+        private readonly Action<IntPtr> activatePrompt;
         private readonly Dictionary<IntPtr, Form> covers = new Dictionary<IntPtr, Form>();
         private readonly Timer timer = new Timer { Interval = 100 };
+        private readonly Timer focusTimer = new Timer { Interval = 40 };
+        private IntPtr focusTargetWindow;
+        private int remainingFocusAttempts;
         private WindowEventWatcher windowEvents;
         private Process observedProcess;
         private bool updatingCovers;
         private PasswordDialog dialog;
         private IntPtr promptWindow;
         private bool promptShown;
+        private bool promptDismissed;
         private TaskCompletionSource<bool> completion;
         private Func<bool> stillLocked;
         private bool disposed;
         private bool wasTargetActive;
         private Rectangle lastPromptArea;
+        internal TimeSpan? AllowedFor { get; private set; }
 
-        internal AppLockOverlay(GuardProcess process, Func<IntPtr> foreground = null)
-        { target = process; foregroundWindow = foreground ?? (() => AppWindows.ForegroundWindow); }
+        internal AppLockOverlay(GuardProcess process, Func<IntPtr> foreground = null, Action<IntPtr> activate = null)
+        {
+            target = process;
+            foregroundWindow = foreground ?? (() => AppWindows.ForegroundWindow);
+            activatePrompt = activate;
+            focusTimer.Tick += RetryPromptFocus;
+        }
 
-        internal Task<bool> PromptAsync(PasswordStore passwords, Func<bool> isLocked = null)
+        internal Task<bool> PromptAsync(PasswordStore passwords, Func<bool> isLocked = null, string accessError = null)
         {
             stillLocked = isLocked;
             completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            dialog = new PasswordDialog(passwords, false, "Unlock " + target.Name, true, false, true);
+            dialog = new PasswordDialog(passwords, false, "Unlock " + target.Name, false, false, true, true, foregroundWindow, activatePrompt);
+            if (!string.IsNullOrEmpty(accessError)) dialog.ShowAccessError(accessError);
             dialog.TopMost = false;
             dialog.FormBorderStyle = FormBorderStyle.None;
             dialog.ControlBox = false;
@@ -42,11 +54,16 @@ namespace UtilityTool.Frontend
             dialog.FormClosed += delegate
             {
                 timer.Stop();
+                StopPromptFocus();
                 if (windowEvents != null) { windowEvents.Dispose(); windowEvents = null; }
-                completion.TrySetResult(dialog.DialogResult == DialogResult.OK);
+                bool allowed = dialog.DialogResult == DialogResult.OK;
+                AllowedFor = allowed ? dialog.AllowedFor : null;
+                completion.TrySetResult(allowed);
             };
-            // Modeless dialogs need an explicit close for their Cancel button.
-            ((Button)dialog.CancelButton).Click += delegate { dialog.DialogResult = DialogResult.Cancel; dialog.Close(); };
+            // Dismiss only the prompt; keep every curtain and the access task.
+            // Timer/foreground updates must not immediately reopen it.
+            dialog.KeepLocked += delegate { promptDismissed = true; promptShown = false; StopPromptFocus(); };
+            dialog.VisibleChanged += delegate { if (!dialog.Visible) StopPromptFocus(); };
             timer.Tick += Tick;
             // A hosted Store app's frame moves in a different process. Watch its
             // frame events too, filtering unrelated windows before doing any work.
@@ -85,11 +102,12 @@ namespace UtilityTool.Frontend
             try
             {
                 using (var process = Process.GetProcessById(target.Id))
-                    if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != target.StartTimeTicks)
+                    if (process.HasExited || (target.StartTimeTicks != 0 && process.StartTime.ToUniversalTime().Ticks != target.StartTimeTicks))
                     { Cancel(); return; }
             }
             catch (ArgumentException) { Cancel(); return; }
             catch (InvalidOperationException) { Cancel(); return; }
+            catch (System.ComponentModel.Win32Exception) { /* Retain the curtain when process metadata is temporarily unavailable. */ }
             UpdateCovers();
         }
 
@@ -113,7 +131,12 @@ namespace UtilityTool.Frontend
                 ((LockCoverWindow)restoredCover).ResumeWindowControls();
             if (type == WindowEventWatcher.Location)
                 foreach (var cover in covers.Values) if (((LockCoverWindow)cover).IsDragging) return;
-            if (type == WindowEventWatcher.Foreground) wasTargetActive = false;
+            if (type == WindowEventWatcher.Foreground)
+            {
+                wasTargetActive = false;
+                // Do not let a delayed retry pull focus back from another app.
+                if (!CanFocusPrompt(foregroundWindow())) StopPromptFocus();
+            }
             UpdateCovers();
         }
 
@@ -184,13 +207,13 @@ namespace UtilityTool.Frontend
                 nextWindow = IntPtr.Zero;
                 foreach (var pair in windows) if (covers.ContainsKey(pair.Key)) { nextWindow = pair.Key; break; }
             }
-            if (nextWindow != IntPtr.Zero)
+            if (nextWindow != IntPtr.Zero && !promptDismissed)
             {
                 bool focus = targetActive && (!dialog.Visible || nextWindow != promptWindow ||
                     (!wasTargetActive && foreground != dialog.Handle));
                 ShowPrompt(nextWindow, focus);
             }
-            else dialog.Hide();
+            else if (nextWindow == IntPtr.Zero) dialog.Hide();
             if (dialog.IsHandleCreated) overlayHandles.Add(dialog.Handle);
             // Show/ownership changes can raise the external owner, even without
             // activation. Preserve every background app window's original level.
@@ -221,13 +244,46 @@ namespace UtilityTool.Frontend
         {
             Form cover;
             if (disposed || dialog.IsDisposed || !covers.TryGetValue(window, out cover)) return;
+            promptDismissed = false;
             promptWindow = window;
             promptShown = true;
             if (!((LockCoverWindow)cover).IsDragging) PositionPrompt(cover.Bounds);
             if (dialog.Owner != cover) dialog.Owner = cover;
             if (!dialog.Visible) dialog.Show(cover);
-            if (focus && !dialog.ContainsFocus) dialog.FocusPassword();
+            if (focus) StartPromptFocus(window);
             MatchWindowOrder();
+        }
+
+        private bool CanFocusPrompt(IntPtr foreground)
+        {
+            Form cover;
+            return !disposed && (stillLocked == null || stillLocked()) && dialog != null && !dialog.IsDisposed && dialog.Visible && !promptDismissed &&
+                focusTargetWindow == promptWindow && covers.TryGetValue(focusTargetWindow, out cover) &&
+                cover.Visible && AppWindows.Exists(focusTargetWindow) && !((LockCoverWindow)cover).UsingWindowControls &&
+                (foreground == focusTargetWindow || foreground == cover.Handle || foreground == dialog.Handle);
+        }
+
+        private void StartPromptFocus(IntPtr window)
+        {
+            focusTargetWindow = window;
+            remainingFocusAttempts = 12;
+            RetryPromptFocus(null, EventArgs.Empty);
+        }
+
+        private void RetryPromptFocus(object sender, EventArgs args)
+        {
+            if (!CanFocusPrompt(foregroundWindow()) || remainingFocusAttempts-- <= 0 || dialog.HasForegroundFocus)
+            { StopPromptFocus(); return; }
+            dialog.FocusPassword();
+            if (dialog.HasForegroundFocus) StopPromptFocus();
+            else focusTimer.Start();
+        }
+
+        private void StopPromptFocus()
+        {
+            focusTimer.Stop();
+            remainingFocusAttempts = 0;
+            focusTargetWindow = IntPtr.Zero;
         }
 
         private void PositionPrompt(Rectangle area)
@@ -251,6 +307,7 @@ namespace UtilityTool.Frontend
             // Complete pending access explicitly and release every cover immediately.
             if (completion != null) completion.TrySetResult(false);
             timer.Dispose();
+            focusTimer.Dispose();
             if (observedProcess != null) { observedProcess.Dispose(); observedProcess = null; }
             if (windowEvents != null) { windowEvents.Dispose(); windowEvents = null; }
             if (dialog != null) dialog.Dispose();

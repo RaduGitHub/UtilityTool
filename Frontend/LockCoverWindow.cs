@@ -149,7 +149,7 @@ namespace UtilityTool.Frontend
             if (ClientSize.Height > 70 && ClientSize.Width > 280)
             {
                 var badge = new Rectangle((ClientSize.Width - 270) / 2, ClientSize.Height - 54, 270, 30);
-                TextRenderer.DrawText(e.Graphics, "Locked with UtilityTool", SystemFonts.MessageBoxFont,
+                TextRenderer.DrawText(e.Graphics, "Locked · Click to unlock", SystemFonts.MessageBoxFont,
                     badge, AppTheme.FluentMuted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
         }

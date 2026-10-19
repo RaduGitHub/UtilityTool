@@ -209,26 +209,40 @@ internal static class WpfChecks
             app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/UtilityTool;component/Frontend/Wpf/Styles.xaml", UriKind.Relative) });
             var window = new FluentMainWindow(true);
             window.Show(); Pump();
-            bool includeHiddenLock = args.Contains("--include-hidden-lock");
+            // Lock is visible again. Routine checks cover its isolated pages,
+            // password prompts and owned guard fixtures unless explicitly skipped.
+            bool includeLock = !args.Contains("--skip-lock");
             if (args.Contains("--soundboard-only")) SoundboardChecks.Run(Check, output, window, Pump, Capture);
+            else if (args.Contains("--lock-page-only")) LockRunningPageChecks.Run(Check, output, window, Pump, Capture);
+            else if (args.Contains("--applock-only")) { RunningAppCatalogChecks.Run(Check); GuardLiveTargetsChecks.Run(Check, output); LockRunningPageChecks.Run(Check, output, window, Pump, Capture); AppPasswordChecks.Run(Check, output, window, Pump, Capture); LockMainChecks.Run(Check, output, Pump); GuardReliabilityChecks.Run(Check, output, Pump); GuardFocusChecks.Run(Check, output, Pump); PasswordDialogChecks(); BackgroundPromptChecks(); }
+            else if (args.Contains("--focus-only")) { GuardFocusChecks.Run(Check, output, Pump); PasswordDialogChecks(); BackgroundPromptChecks(); }
+            else if (args.Contains("--shutdown-only")) { ShutdownPresetChecks.Run(Check, output, window, Pump, Capture); DurationChecks(window); }
             else if (args.Contains("--background-only"))
-            { if (!includeHiddenLock) throw new ArgumentException("Hidden Lock checks require --include-hidden-lock."); BackgroundPromptChecks(); }
+            { if (!includeLock) throw new ArgumentException("Background Lock checks cannot run with --skip-lock."); BackgroundPromptChecks(); }
             else
             {
             File.WriteAllLines(Path.Combine(output, "theme.txt"), new[] { "HighContrast=" + SystemParameters.HighContrast, "Theme=" + Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme(), "Input=" + app.TryFindResource("TextControlBackground"), "ButtonDisabled=" + app.TryFindResource("ButtonBackgroundDisabled"), "WindowBackground=" + window.Background });
             Check(window.MinWidth == window.Width && window.MinHeight == window.Height, "Startup size is the minimum size");
-            foreach (string name in new[] { "Home", "Shutdown", "Sound", "Soundboard", "Settings" })
+            foreach (string name in new[] { "Home", "Shutdown", "Lock", "Sound", "Soundboard", "Settings" })
             { window.SelectPage(name); Pump(); Check(window.CurrentPage == name, "Navigate to " + name); Capture(window, name); }
-            if (includeHiddenLock) { window.SelectPage("Lock"); Pump(); Check(window.CurrentPage == "Settings" && !Children<Wpf.Ui.Controls.Button>(window).Any(button => button.Content is string && ((string)button.Content).Contains("lock")), "Lock tab is hidden and cannot be navigated to"); }
+            Check(Children<Wpf.Ui.Controls.Button>(window).Any(button => button.Content is StackPanel && Children<TextBlock>((StackPanel)button.Content).Any(text => text.Text == "Lock")), "Lock navigation is visible again");
+            ShutdownPresetChecks.Run(Check, output, window, Pump, Capture);
             SoundboardChecks.Run(Check, output, window, Pump, Capture);
             DurationChecks(window);
             SoundChecks(window);
             TileChecks(window);
             ResizeChecks(window);
             WindowControls(window);
-            PreviewActions(window, includeHiddenLock);
-            if (includeHiddenLock)
+            PreviewActions(window, includeLock);
+            if (includeLock)
             {
+                RunningAppCatalogChecks.Run(Check);
+                GuardLiveTargetsChecks.Run(Check, output);
+                LockRunningPageChecks.Run(Check, output, window, Pump, Capture);
+                AppPasswordChecks.Run(Check, output, window, Pump, Capture);
+                LockMainChecks.Run(Check, output, Pump);
+                GuardReliabilityChecks.Run(Check, output, Pump);
+                GuardFocusChecks.Run(Check, output, Pump);
                 PasswordChecks(window);
                 PasswordDialogChecks();
                 DragMaskChecks();
@@ -447,18 +461,18 @@ internal static class WpfChecks
         try { return GetWindowRgn(window, region); }
         finally { DeleteObject(region); }
     }
-    private static void PreviewActions(FluentMainWindow window, bool includeHiddenLock)
+    private static void PreviewActions(FluentMainWindow window, bool includeLock)
     {
         // Handlers must exit without touching shutdown.exe, audio, the password or startup settings.
-        foreach (string name in new[] { "Shutdown", "Sound", "Soundboard", "Settings" })
+        foreach (string name in new[] { "Shutdown", "Lock", "Sound", "Soundboard", "Settings" })
         {
             window.SelectPage(name); Pump();
             foreach (var tile in Children<ToggleButton>(window).Where(button => button.DataContext is TileItem).Take(1)) tile.IsChecked = true;
-            foreach (var button in Children<Wpf.Ui.Controls.Button>(window).Where(button => button.IsEnabled && button.Content is string && ((string)button.Content == "Schedule shutdown" || (string)button.Content == "Cancel shutdown" || (string)button.Content == "Apply locks" || (string)button.Content == "Set password" || (string)button.Content == "Start multiple outputs")).ToList()) button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            foreach (var button in Children<Wpf.Ui.Controls.Button>(window).Where(button => button.IsEnabled && button.Content is string && ((string)button.Content == "Schedule shutdown" || (string)button.Content == "Cancel shutdown" || (string)button.Content == "Lock selected apps" || (string)button.Content == "Set password" || (string)button.Content == "Start multiple outputs")).ToList()) button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             foreach (var toggle in Children<Wpf.Ui.Controls.ToggleSwitch>(window)) toggle.IsChecked = !toggle.IsChecked;
             Pump();
         }
-        if (includeHiddenLock) Check(window.Lock.CanClose(), "Preview guard never arms and can close without a password");
+        if (includeLock) Check(window.Lock.CanClose(), "Preview guard never arms and can close without a password");
     }
     private static void PasswordChecks(FluentMainWindow owner)
     {
@@ -572,11 +586,11 @@ internal static class WpfChecks
             guard.Arm(new[] { firefox, camera, league }, false); guard.ScanOnce(); guard.ScanOnce();
             Check(waiting.Keys.OrderBy(id => id).SequenceEqual(new[] { 101, 102, 103 }), "Several selected apps request access independently while another app remains unaffected");
             Check(waiting.ContainsKey(102), "Store-app ID still matches when its executable path has changed");
-            waiting[101].SetResult(true); waiting[102].SetResult(false); guard.ScanOnce();
+            waiting[101].SetResult(true); waiting[102].SetResult(false);
             var completion = Stopwatch.StartNew();
-            while (!stopped.Contains(102) && completion.ElapsedMilliseconds < 2000) { Pump(); System.Threading.Thread.Sleep(1); }
-            Check(stopped.Contains(102) && !stopped.Contains(101) && !stopped.Contains(103) && waiting.Count == 3,
-                "Approving one app and rejecting another do not approve or reject the third app's pending lock");
+            while ((!guard.IsApproved(firefox) || guard.IsPending(camera)) && completion.ElapsedMilliseconds < 2000) { Pump(); System.Threading.Thread.Sleep(1); }
+            Check(stopped.IsEmpty && guard.IsApproved(firefox) && !guard.IsApproved(camera) && guard.IsPending(league) && waiting.Count == 3,
+                "Modern asynchronous denial leaves the app unapproved without closing it or affecting another app's pending lock");
             guard.Disarm(); waiting[103].SetResult(true);
         }
         string root = Path.Combine(output, "riot-matching-fixture-" + Guid.NewGuid().ToString("N"));

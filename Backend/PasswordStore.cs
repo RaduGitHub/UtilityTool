@@ -12,10 +12,10 @@ namespace UtilityTool.Backend
         private byte[] hash;
         internal bool HasPassword { get { return hash != null; } }
 
-        internal PasswordStore(string path)
+        internal PasswordStore(string path, bool loadExisting = true)
         {
             filePath = path;
-            if (!File.Exists(path)) return;
+            if (!loadExisting || !File.Exists(path)) return;
             byte[] bytes = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
             try
             {

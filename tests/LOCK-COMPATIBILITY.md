@@ -32,3 +32,32 @@ guard while UtilityTool is running.
 Run `tests/run-checks.ps1` for the regression suite. The compiled check executable
 also accepts `--common-app-report` to report detection targets without applying
 locks or starting the listed apps.
+
+The refreshed WPF Lock page has isolated checks for Running programs and Locked
+programs, search/loading states, reused rows/icons, manual executable entries,
+missing saved programs, cancelled window selection, password-gated removal and
+monitoring changes, and settings-write or target-update failures. These inject
+discovery results and the window-picker result; they do not click a real app or
+apply protection to its process. Saved monitoring and existing metadata are
+restored from fixture files, including monitoring with an empty saved list.
+
+Guard checks use synthetic process snapshots and an injected clock to verify
+adding/removing targets during monitoring, targeted/all-program Lock now,
+independent process identities, timed expiry and rejection of stale password
+results after a relock or target removal. Password-store checks use dedicated
+temporary files for independent per-app hashes, global-password fallback,
+override reset and damaged-file repair. Dialog checks cover masked custom
+passwords, duration selection, retry and fail-closed handling of unavailable
+credentials. No real password or protection settings are read or changed.
+
+Wrong passwords retain the curtain and support retry. Keep locked/Escape/Alt+F4
+dismiss the prompt without terminating the app; clicking the curtain returns to
+password entry. The fixture checks this policy without locking installed apps.
+
+Foreground-handoff checks reproduce a native password edit retaining this thread's focus while a different HWND is foreground. They verify a fresh activation request, bounded retries, preserving an already focused Unlock button, cancellation after switching apps or dismissing the prompt, and Enter submission. These checks inject foreground snapshots and activation outcomes; they do not certify live Firefox foreground behavior.
+
+The APPLock-style update implements its selected workflow in UtilityTool's own
+curtain guard. It does not include APPLock's native hook DLL or claim equivalent
+Windows activation interception. The same first-frame, elevation and fullscreen
+limitations still apply. The compatibility table describes resolver coverage and
+earlier installed-path inspection, not new live end-to-end testing of those apps.

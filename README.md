@@ -1,15 +1,24 @@
 # UtilityTool
 Everyday Windows utilities in one application.
 
-- Shutdown timers.
+- Shutdown timers with saved times.
+- Password protection for selected apps.
 - Playback through multiple sound outputs.
 - A soundboard with MP3 imports, audio recording and custom tile images.
 
-The Lock tab is temporarily hidden on `ui-redesign`; saved locks do not automatically activate while it is hidden. Existing lock/password files are preserved.
+The refreshed Lock tab has **Running programs** and **Locked programs** views. Existing protected apps, monitoring state and UtilityTool password are reused. Choose **Lock** beside a running program, then **Turn on monitoring** to apply its protection. **Remove lock**, **Turn off monitoring** and closing UtilityTool while monitoring is active require the UtilityTool password.
 
 The `ui-redesign` branch tries a native WPF frontend with [WPF UI](https://github.com/lepoco/wpfui) 4.3.0. The original WinForms app is preserved on `main`.
 
-Locked apps use an opaque Privacy curtain matching UtilityTool's dark theme, with a centered password prompt. Enter submits the password. The curtain hides the app's contents without taking screenshots or processing a blur.
+Locked apps use an opaque Privacy curtain matching UtilityTool's dark theme, with a centered password prompt. Opening or returning to a protected app requests keyboard focus for its password field; a background launch leaves the app you are using focused. Enter submits the password. Choose **Time allowed for this unlock**: until the app exits, or 1, 5, 15, 30 or 60 minutes. **Lock now** revokes the selected program's current access; **Lock all now** revokes access for every protected program. The curtain hides the app's contents without taking screenshots or processing a blur.
+
+A wrong password leaves the app locked and allows another try. **Keep locked** (or Escape) hides the prompt while keeping the curtain; click the curtain to return to the password field. The curtain's title bar still lets you move, minimize, maximize or close the protected app.
+
+In Lock, search by program name, window title or executable. **Running programs** lists current windows; **Locked programs** retains protected programs even while they are closed. **Pick a window…** gives you three seconds to switch to the program to protect, and **Add app…** accepts a nonrunning app's `.exe` without launching it. Programs can be added or removed while monitoring; unrelated locks stay active. Unsupported windows show an explanation.
+
+Each protected row has **Password…**. Verify the UtilityTool password, then choose a separate app password or **Use UtilityTool password**. Changing an app's password locks its current sessions again. The main password remains at `%LOCALAPPDATA%\UtilityTool\password.dat`; app overrides are stored under `%LOCALAPPDATA%\UtilityTool\AppPasswords` with hashed filenames. Both store salted PBKDF2 hashes protected with Windows DPAPI, rather than plaintext passwords. This desktop guard requires UtilityTool to keep running and does not provide Windows account isolation.
+
+Shutdown has a **Saved times** list on the left and the timer on the right. **Add time** creates a named preset without changing the timer. Select a preset, then use **Modify selected** to change its name and duration or **Delete selected** to remove it. Double-click a preset (or press Enter with the list focused) to fill the timer; **Schedule shutdown** starts it. The panels resize with the window. Existing saved durations are retained, and the list is saved in `%LOCALAPPDATA%\UtilityTool\shutdown-presets.xml`, including when you remove every entry.
 
 While locks are armed, Windows window events trigger protection and process-exit notifications release curtains. Backup scans run every three seconds. This reduces launch/reopen delay and background polling; it cannot guarantee that the first frame of an app launched outside UtilityTool is hidden.
 

@@ -17,7 +17,11 @@ namespace UtilityTool
             app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary { Theme = Wpf.Ui.Appearance.ApplicationTheme.Dark });
             app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
             app.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary { Source = new Uri("/UtilityTool;component/Frontend/Wpf/Styles.xaml", UriKind.Relative) });
-            app.Run(new Frontend.Wpf.FluentMainWindow(Array.Exists(args, arg => arg == "--preview")));
+            var window = new Frontend.Wpf.FluentMainWindow(Array.Exists(args, arg => arg == "--preview"));
+            // Windows shutdown/logoff must not wait for an app-unlock password.
+            // Closed still disposes the guard; saved protection intent is retained.
+            app.SessionEnding += delegate { window.PrepareForSessionEnd(); };
+            app.Run(window);
         }
     }
 }

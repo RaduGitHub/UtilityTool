@@ -291,7 +291,7 @@ namespace UtilityTool.Frontend.Tabs
             var chosen = appCatalog.FindAll(delegate(InstalledApp app) { return selectedApps.Contains(app.Id); });
             if (chosen.Count == 0) { guardStatus.Text = "Select at least one supported app."; return; }
             if (!passwords.HasPassword && !ConfigurePassword()) return;
-            if (MessageBox.Show(FindForm(), "Selected apps will ask for a password, including apps already open. A wrong password or cancelling closes that instance and may lose unsaved work. Continue?",
+            if (MessageBox.Show(FindForm(), "Selected apps will ask for a password, including apps already open. An incorrect password or Keep locked leaves the app protected so you can try again. Continue?",
                 "Apply app locks", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
             try
             {
@@ -311,7 +311,7 @@ namespace UtilityTool.Frontend.Tabs
             savedLocked = false; selectionDirty = false; saveTimer.Stop();
             guard.Disarm();
             ClearOverlays();
-            guardStatus.Text = "Apps unlocked. Reopen any app that was closed.";
+            guardStatus.Text = "Protection is off. Selected apps can be used normally.";
             UpdateGuardControls();
         }
 

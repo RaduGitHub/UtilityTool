@@ -33,16 +33,20 @@ namespace UtilityTool.Frontend
             BackColor = AppTheme.Surface;
             var tabs = new ModernTabs { Dock = DockStyle.Fill };
             var soundTab = new SoundTab();
+            var lockTab = new LockTab();
             tabs.TabPages.Add(new HomeTab());
             tabs.TabPages.Add(new ShutdownTab());
-            // Lock is temporarily hidden; saved locks must not arm without an unlock tab.
+            tabs.TabPages.Add(lockTab);
             tabs.TabPages.Add(soundTab);
             tabs.TabPages.Add(new SettingsTab());
             tabs.SelectedIndexChanged += async delegate
             {
                 if (tabs.SelectedTab == soundTab && soundTab.NeedsLoading) await soundTab.LoadDevices();
+                if (tabs.SelectedTab == lockTab && lockTab.NeedsLoading) await lockTab.LoadInstalledApps();
             };
             Controls.Add(tabs);
+            Shown += delegate { lockTab.InitializeSavedLocks(); };
+            FormClosing += delegate(object sender, FormClosingEventArgs e) { if (e.CloseReason == CloseReason.UserClosing && !lockTab.CanClose()) e.Cancel = true; };
             /* Background/tray mode temporarily disabled.
             trayMenu = new ContextMenuStrip();
             trayMenu.Items.Add("Open UtilityTool", null, delegate { RestoreWindow(); });
