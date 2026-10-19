@@ -29,7 +29,7 @@ namespace UtilityTool.Backend
                 if (item == null || item.Name != "app") continue;
                 string id = item.GetAttribute("id");
                 if (!string.IsNullOrWhiteSpace(id) && ids.Add(id))
-                    state.Apps.Add(new InstalledApp(id, item.GetAttribute("name"), item.GetAttribute("executable")));
+                    state.Apps.Add(new InstalledApp(id, item.GetAttribute("name"), item.GetAttribute("executable"), item.GetAttribute("arguments")));
             }
             return state;
         }
@@ -47,6 +47,7 @@ namespace UtilityTool.Backend
                     {
                         writer.WriteStartElement("app"); writer.WriteAttributeString("id", app.Id);
                         writer.WriteAttributeString("name", app.Name); writer.WriteAttributeString("executable", app.ExecutablePath);
+                        if (!string.IsNullOrEmpty(app.LaunchArguments)) writer.WriteAttributeString("arguments", app.LaunchArguments);
                         writer.WriteEndElement();
                     }
                     writer.WriteEndElement();

@@ -56,14 +56,16 @@ namespace UtilityTool.Backend
                         item = Call(items, "Item", BindingFlags.InvokeMethod, index);
                         string name = Convert.ToString(Call(item, "Name", BindingFlags.GetProperty));
                         string id = Convert.ToString(Call(item, "Path", BindingFlags.GetProperty));
-                        string target = "";
+                        string target = "", arguments = "";
                         try { target = Convert.ToString(Call(item, "ExtendedProperty", BindingFlags.InvokeMethod, "System.Link.TargetParsingPath")); }
+                        catch (TargetInvocationException) { }
+                        try { arguments = Convert.ToString(Call(item, "ExtendedProperty", BindingFlags.InvokeMethod, "System.Link.Arguments")); }
                         catch (TargetInvocationException) { }
                         if (!IsExecutable(target) && IsExecutable(id)) target = id;
                         if (!IsExecutable(target)) target = "";
                         if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(id))
                         {
-                            var app = new InstalledApp(id, name, target);
+                            var app = new InstalledApp(id, name, target, arguments);
                             if (IsSelectable(app) && ids.Add(id)) apps.Add(app);
                         }
                     }

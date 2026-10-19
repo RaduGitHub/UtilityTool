@@ -11,6 +11,10 @@ namespace UtilityTool.Frontend
         internal static readonly Color Accent = Color.FromArgb(115, 150, 255);
         internal static readonly Color Surface = Color.FromArgb(29, 34, 44);
 
+        // Match the WPF app and its password windows when drawing native overlays.
+        internal static readonly Color FluentSurface = Color.FromArgb(28, 32, 39);
+        internal static readonly Color FluentMuted = Color.FromArgb(166, 173, 185);
+
         internal static readonly Color Muted = Color.FromArgb(157, 169, 187);
         internal static readonly Color Panel = Color.FromArgb(39, 46, 59);
         internal static readonly Color AccentInk = Color.FromArgb(18, 25, 43);
@@ -30,13 +34,14 @@ namespace UtilityTool.Frontend
         [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
-        internal static void ApplyWindowFrame(Form window)
+        internal static void ApplyWindowFrame(Form window, Color? surface = null)
         {
             try
             {
                 int enabled = 1;
                 DwmSetWindowAttribute(window.Handle, 20, ref enabled, 4);
-                int background = Surface.R | (Surface.G << 8) | (Surface.B << 16);
+                Color frame = surface ?? Surface;
+                int background = frame.R | (frame.G << 8) | (frame.B << 16);
                 int foreground = Ink.R | (Ink.G << 8) | (Ink.B << 16);
                 DwmSetWindowAttribute(window.Handle, 35, ref background, 4);
                 DwmSetWindowAttribute(window.Handle, 36, ref foreground, 4);
@@ -173,6 +178,7 @@ namespace UtilityTool.Frontend
     internal sealed class ModernButton : Button
     {
         internal bool Primary;
+        internal bool FluentPalette;
         private bool pressed;
         internal ModernButton()
         {
@@ -207,6 +213,9 @@ namespace UtilityTool.Frontend
             Color fill = !Enabled ? Color.FromArgb(42, 49, 62)
                 : Primary ? (pressed ? Color.FromArgb(95, 124, 215) : hover ? Color.FromArgb(139, 169, 255) : AppTheme.Accent)
                 : (pressed ? Color.FromArgb(66, 78, 98) : hover ? Color.FromArgb(62, 73, 91) : Color.FromArgb(54, 64, 81));
+            if (FluentPalette && Enabled)
+                fill = Primary ? (pressed ? Color.FromArgb(57, 172, 223) : hover ? Color.FromArgb(108, 206, 255) : Color.FromArgb(72, 196, 255))
+                    : (pressed ? Color.FromArgb(37, 42, 51) : hover ? Color.FromArgb(58, 65, 76) : Color.FromArgb(48, 53, 62));
             using (var shape = AppTheme.Rounded(new Rectangle(1, 1, Width - 3, Height - 3), 8))
             using (var brush = new SolidBrush(fill))
             using (var border = new Pen(Primary && Enabled ? fill : Color.FromArgb(71, 82, 103)))
