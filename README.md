@@ -1,5 +1,5 @@
 # DISCLAIMER
-This is a project that I made for my usage primarily with things that I felt Windows did not have (Shutdown Timer, Soundboard, Multiple Sound Output).
+This is a project that I made for my usage primarily with things that I felt Windows did not have (Shutdown Timer, Soundboard, Multiple Sound Output). Maybe someone will find these useful in one single app or just get the code to run their own version of the app.
 Every security risk and whatnot is not checked, this will most likely not be updated by me anytime soon. There is some hidden functionality of having it run in background but I never finished it as this was good enough, everything else is written below.
 
 # UtilityTool
